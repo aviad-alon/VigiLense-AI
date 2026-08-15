@@ -10,7 +10,7 @@ An autonomous pharmacovigilance signal detection agent built on the ReAct (Reaso
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com/)
 [![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=flat-square&logo=vercel&logoColor=white)](https://vercel.com/)
 
-[Overview](#overview) • [Features](#features) • [Getting Started](#getting-started) • [Project Structure](#project-structure) • [API Reference](#api-reference) • [Deployment](#deployment)
+[Overview](#overview) • [Features](#features) • [Getting Started](#getting-started) • [Tools](#tools) • [API Reference](#api-reference) • [Deployment](#deployment)
 
 </div>
 
@@ -21,24 +21,6 @@ An autonomous pharmacovigilance signal detection agent built on the ReAct (Reaso
 VigiLenseAI investigates potential adverse drug events by autonomously querying medical literature, FDA databases, and an internal knowledge base. Given a natural-language query, the agent iterates through up to 15 Reason → Act → Observe cycles, then produces a structured pharmacovigilance report in CIOMS/ICH E2D format — complete with numbered PubMed citations and a statistical signal assessment (Reporting Odds Ratio + 95% CI).
 
 The agent enforces a **zero-fabrication policy**: every claim in the final report must be traceable to a tool response. A built-in guardrail system halts investigations that fall outside the system's scope before any expensive reasoning begins.
-
-```
-User Query
-    │
-    ▼
-ReAct Loop (max 15 iterations)
-    │  Reason → call tool → observe result → repeat
-    │
-    ├── query_knowledge_base  (mandatory first step)
-    ├── fetch_pubmed_advanced
-    ├── get_drug_profile
-    ├── fetch_fda_adverse_events
-    ├── calculate_disproportionality
-    └── generate_pharmacovigilance_report
-    │
-    ▼
-Structured PV Report  ·  Step Trace  ·  Supabase Log
-```
 
 ## Features
 
@@ -142,25 +124,44 @@ Create a `.env` file at the project root with the following keys:
 └── vercel.json           # Vercel deployment configuration
 ```
 
-## Agent tools
+## Tools
 
-The agent has access to 10 tools across 5 categories:
-
-| Category | Tool | Data source |
-|----------|------|-------------|
-| Knowledge base | `query_knowledge_base` | Pinecone (FDA label RAG) |
-| Knowledge base | `check_past_signals` | Supabase investigation history |
-| Literature | `fetch_pubmed_advanced` | PubMed API |
-| Literature | `search_drug_class_effects` | PubMed API |
-| Drug profile | `get_drug_profile` | OpenFDA + RxNorm |
-| Statistics | `calculate_disproportionality` | Internal (ROR + 95% CI) |
-| Statistics | `fetch_fda_adverse_events` | OpenFDA FAERS |
-| Reporting | `generate_pharmacovigilance_report` | — |
-| Control | `submit_final_report` | — (ends loop normally) |
-| Control | `abort_investigation` | — (ends loop on guardrail) |
+The agent has access to 10 tools across 5 categories.
 
 > [!IMPORTANT]
-> `query_knowledge_base` is always the first tool called. If the queried drug is not in the formulary, the agent immediately aborts with `drug_not_in_portfolio` — no external API calls are made.
+> `query_knowledge_base` is always the mandatory first step. If the drug is not in the formulary, the agent aborts immediately with `drug_not_in_portfolio` — no external API calls are made.
+
+### Knowledge base
+
+**`query_knowledge_base`** — Performs a semantic vector search (RAG) over the internal Pinecone index, which stores FDA label content and safety summaries for formulary drugs. Establishes the known-risk baseline before any external retrieval begins.
+
+**`check_past_signals`** — Queries the Supabase `agent_logs` table to surface any previous investigations on the same drug. Helps the agent understand what signals have already been detected internally.
+
+### Literature
+
+**`fetch_pubmed_advanced`** — Searches PubMed using boolean query syntax (`"drug" AND ("ae1" OR "ae2")`) and retrieves abstracts from a configurable date range (default: 2020–present). The LLM screens all results for relevance before they are added to the report.
+
+**`search_drug_class_effects`** — Searches PubMed by drug class rather than by a specific drug name. Useful for contextualizing a finding within a broader pharmacological class (e.g. "SGLT2 inhibitors AND ketoacidosis").
+
+### Drug profile
+
+**`get_drug_profile`** — Resolves a drug name against OpenFDA to retrieve the current FDA label: active ingredients, drug class, mechanism of action, and brand names. Falls back to RxNorm for name normalization when the OpenFDA lookup is ambiguous.
+
+### Statistics
+
+**`fetch_fda_adverse_events`** — Queries the OpenFDA FAERS database for real-world case counts (drug + adverse event vs. everything else). Returns the 2×2 contingency table values needed for disproportionality analysis.
+
+**`calculate_disproportionality`** — Computes the Reporting Odds Ratio (ROR) and its 95% confidence interval from a 2×2 contingency table. An ROR lower bound > 1 is treated as a potential disproportionate signal.
+
+### Reporting
+
+**`generate_pharmacovigilance_report`** — Assembles the structured Markdown report in CIOMS/ICH E2D format. Sections include: FDA label baseline, novel findings from literature, known/expected findings, and signal assessment. All PubMed citations are rendered as numbered references pointing to real PMIDs retrieved during the investigation.
+
+### Control
+
+**`submit_final_report`** — Signals that the investigation is complete. Terminates the ReAct loop and returns the generated report to the caller.
+
+**`abort_investigation`** — Terminates the loop early when a guardrail condition is met. Supported abort codes: `drug_not_in_portfolio`, `query_too_vague`, `multiple_drugs_detected`, `non_medical_query`, `drug_not_recognized`, `no_literature_found`.
 
 ## Formulary
 
