@@ -4,11 +4,6 @@
 
 An autonomous pharmacovigilance signal detection agent built on the ReAct (Reason → Act → Observe) architecture.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Pinecone](https://img.shields.io/badge/Pinecone-RAG-000000?style=flat-square)](https://pinecone.io/)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com/)
-[![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=flat-square&logo=vercel&logoColor=white)](https://vercel.com/)
 
 **Live demo: [https://vigilense-ai.vercel.app](https://vigilense-ai.vercel.app)**
 
