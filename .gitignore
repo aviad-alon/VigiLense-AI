@@ -1,0 +1,23 @@
+# Environment variables — never commit secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Large binary files
+*.pdf
+*.pptx
+*.mov
+
+# macOS
+.DS_Store
+
+# Editor
+.claude/
+screenshot.png

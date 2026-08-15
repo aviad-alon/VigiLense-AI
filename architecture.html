@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VigiLenseAI - System Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15,23,42,0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle { background: transparent; border: none; color: #475569; cursor: pointer; font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem; transition: color 0.2s, background 0.2s; }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30,41,59,0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button { background: rgba(30,41,59,0.8); border: 1px solid #334155; color: #94a3b8; padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .toolbar-actions button:hover { background: rgba(51,65,85,0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-row">
+      <div class="pulse-dot"></div>
+      <h1>VigiLenseAI - System Architecture</h1>
+      <div class="toolbar">
+        <div class="toolbar-actions">
+          <button onclick="copyAsImage(this)">📋 Copy</button>
+          <button onclick="downloadPNG(this)">🖼️ PNG</button>
+          <button onclick="downloadPDF(this)">📄 PDF</button>
+        </div>
+        <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options">⋯</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <!--
+      Layout alignment:
+        Top line:    y=18  → FRONTEND top = TOOLS top = DATA SOURCES top
+        Bottom line: y=470 → RESPONSE bottom = TOOLS bottom = DATA SOURCES bottom
+        Arrow gaps:  30px each (FRONTEND→TASK, TASK→LLM, LLM→END, END→RESPONSE)
+    -->
+    <svg viewBox="0 0 1060 488">
+      <defs>
+        <marker id="arr"         markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/></marker>
+        <marker id="arr-cyan"    markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/></marker>
+        <marker id="arr-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/></marker>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+      </defs>
+
+      <rect width="100%" height="100%" fill="url(#grid)"/>
+
+      <!-- ══ ARROWS (drawn first) ══ -->
+
+      <!-- Left column: all gaps = 30px -->
+      <line x1="210" y1="62"  x2="210" y2="92"  stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+      <line x1="210" y1="138" x2="210" y2="168" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+      <line x1="210" y1="298" x2="210" y2="328" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+      <line x1="210" y1="390" x2="210" y2="420" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+
+      <!-- LLM feedback loop (left side) -->
+      <path d="M 50,282 L 20,282 L 20,185 L 50,185" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arr-emerald)"/>
+
+      <!-- RESPONSE → FRONTEND (return loop, right side) -->
+      <path d="M 330,445 Q 405,445 405,35 Q 405,18 330,18" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
+
+      <!-- LLM → TOOLS -->
+      <line x1="370" y1="233" x2="418" y2="233" stroke="#34d399" stroke-width="2" marker-end="url(#arr-emerald)"/>
+
+      <!-- TOOLS → DATA SOURCES (4 arrows, aligned with data source centers) -->
+      <line x1="690" y1="88"  x2="728" y2="88"  stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
+      <line x1="690" y1="200" x2="728" y2="200" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
+      <line x1="690" y1="312" x2="728" y2="312" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
+      <line x1="690" y1="424" x2="728" y2="424" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
+
+      <!-- ══ LEFT COLUMN ══ -->
+
+      <!-- FRONTEND: y=18, h=44, bottom=62 -->
+      <rect x="90" y="18" width="240" height="44" rx="6" fill="#0f172a"/>
+      <rect x="90" y="18" width="240" height="44" rx="6" fill="rgba(8,51,68,0.5)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="210" y="37" fill="white" font-family="JetBrains Mono,monospace" font-size="14" font-weight="700" text-anchor="middle" letter-spacing="2">F R O N T E N D</text>
+      <text x="210" y="52" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">index.html · query · report display</text>
+
+      <!-- TASK: y=92, h=46, bottom=138 -->
+      <rect x="90" y="92" width="240" height="46" rx="6" fill="#0f172a"/>
+      <rect x="90" y="92" width="240" height="46" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="210" y="114" fill="white" font-family="JetBrains Mono,monospace" font-size="16" font-weight="700" text-anchor="middle" letter-spacing="3">T A S K</text>
+      <text x="210" y="129" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">POST /api/execute · user query</text>
+
+      <!-- ReAct loop label -->
+      <text x="8" y="234" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle" transform="rotate(-90 8 234)">R e A c t  l o o p</text>
+
+      <!-- LLM: y=168, h=130, bottom=298 -->
+      <rect x="50" y="168" width="320" height="130" rx="8" fill="#0f172a"/>
+      <rect x="50" y="168" width="320" height="130" rx="8" fill="rgba(6,78,59,0.35)" stroke="#34d399" stroke-width="2"/>
+      <text x="210" y="203" fill="white" font-family="JetBrains Mono,monospace" font-size="25" font-weight="700" text-anchor="middle">LLM</text>
+      <text x="210" y="222" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="12" text-anchor="middle">LLMod.ai · NBUECSE-gpt-5-mini</text>
+      <line x1="75" y1="232" x2="345" y2="232" stroke="#1e293b" stroke-width="1"/>
+      <text x="210" y="254" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="13" text-anchor="middle">Reason → Act → Observe</text>
+      <text x="210" y="276" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="13" text-anchor="middle">MAX 15 iterations per query</text>
+
+      <!-- END: y=328, h=62, bottom=390 -->
+      <rect x="90" y="328" width="240" height="62" rx="6" fill="#0f172a"/>
+      <rect x="90" y="328" width="240" height="62" rx="6" fill="rgba(8,51,68,0.3)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="210" y="354" fill="white" font-family="JetBrains Mono,monospace" font-size="16" font-weight="600" text-anchor="middle">E N D</text>
+      <text x="210" y="372" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">abort / submit_final_report</text>
+
+      <!-- RESPONSE: y=420, h=50, bottom=470 -->
+      <rect x="90" y="420" width="240" height="50" rx="6" fill="#0f172a"/>
+      <rect x="90" y="420" width="240" height="50" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="210" y="442" fill="white" font-family="JetBrains Mono,monospace" font-size="16" font-weight="700" text-anchor="middle" letter-spacing="3">R E S P O N S E</text>
+      <text x="210" y="458" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">final report · steps trace</text>
+
+      <!-- ══ MIDDLE COLUMN — TOOLS (y=18 to y=470, h=452) ══ -->
+
+      <rect x="418" y="18" width="272" height="452" rx="8" fill="#0f172a"/>
+      <rect x="418" y="18" width="272" height="452" rx="8" fill="rgba(20,184,166,0.04)" stroke="#14b8a6" stroke-width="1.5"/>
+      <text x="554" y="41" fill="#14b8a6" font-family="JetBrains Mono,monospace" font-size="12" font-weight="700" text-anchor="middle" letter-spacing="3">T O O L S</text>
+
+      <!-- Tools 1–8: h=30, gap=12 starting at y=52 -->
+      <rect x="432" y="52"  width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="52"  width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="72"  fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">query_knowledge_base</text>
+
+      <rect x="432" y="94"  width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="94"  width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="114" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">get_drug_profile</text>
+
+      <rect x="432" y="136" width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="136" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="156" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">fetch_pubmed_advanced</text>
+
+      <rect x="432" y="178" width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="178" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="198" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">search_drug_class_effects</text>
+
+      <rect x="432" y="220" width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="220" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="240" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">fetch_fda_adverse_events</text>
+
+      <rect x="432" y="262" width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="262" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="282" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">calculate_disproportionality</text>
+
+      <rect x="432" y="304" width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="304" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="324" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">check_past_signals</text>
+
+      <rect x="432" y="346" width="244" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="346" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="554" y="366" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">generate_pv_report</text>
+
+      <!-- Tools 9+10: y=388, half width -->
+      <rect x="432" y="388" width="119" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="388" width="119" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="491" y="408" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="9" font-weight="500" text-anchor="middle">submit_final_report</text>
+
+      <rect x="557" y="388" width="119" height="30" rx="4" fill="#0f172a"/>
+      <rect x="557" y="388" width="119" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="616" y="408" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="9" font-weight="500" text-anchor="middle">abort_investigation</text>
+
+      <text x="554" y="444" fill="#14b8a6" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">api/tools.py</text>
+
+      <!-- ══ RIGHT COLUMN — DATA SOURCES (y=18 to y=470, h=452) ══ -->
+
+      <rect x="728" y="18" width="300" height="452" rx="8" fill="#0f172a"/>
+      <rect x="728" y="18" width="300" height="452" rx="8" fill="rgba(30,41,59,0.3)" stroke="#64748b" stroke-width="1.5" stroke-dasharray="6,3"/>
+      <text x="878" y="41" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="11" font-weight="700" text-anchor="middle" letter-spacing="3">D A T A  ·  S O U R C E S</text>
+
+      <!-- 4 sources: h=72, gap=40, starting at y=52. Centers: 88, 200, 312, 424 -->
+
+      <!-- PubMed: y=52–124, center=88 -->
+      <rect x="743" y="52"  width="270" height="72" rx="6" fill="#0f172a"/>
+      <rect x="743" y="52"  width="270" height="72" rx="6" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="878" y="82"  fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" text-anchor="middle">PubMed Database</text>
+      <text x="878" y="103" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="12" text-anchor="middle">Scientific literature · via NCBI API</text>
+
+      <!-- Pinecone: y=164–236, center=200 -->
+      <rect x="743" y="164" width="270" height="72" rx="6" fill="#0f172a"/>
+      <rect x="743" y="164" width="270" height="72" rx="6" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="878" y="194" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" text-anchor="middle">Company Vector DB</text>
+      <text x="878" y="215" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="12" text-anchor="middle">Pinecone · FDA label sections (RAG)</text>
+
+      <!-- OpenFDA: y=276–348, center=312 -->
+      <rect x="743" y="276" width="270" height="72" rx="6" fill="#0f172a"/>
+      <rect x="743" y="276" width="270" height="72" rx="6" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="878" y="306" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" text-anchor="middle">OpenFDA FAERS</text>
+      <text x="878" y="327" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="12" text-anchor="middle">Adverse event reports · via API</text>
+
+      <!-- Supabase: y=388–460, center=424 -->
+      <rect x="743" y="388" width="270" height="72" rx="6" fill="#0f172a"/>
+      <rect x="743" y="388" width="270" height="72" rx="6" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="878" y="418" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" text-anchor="middle">Supabase PostgreSQL</text>
+      <text x="878" y="439" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="12" text-anchor="middle">Run history · agent_logs table</text>
+
+    </svg>
+  </div>
+
+</div>
+
+<script>
+  async function copyAsImage(btn) {
+    const orig = btn.textContent;
+    try {
+      const el = document.getElementById('report-container');
+      const r = el.getBoundingClientRect();
+      const pad = 32;
+      const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      btn.textContent = '✓ Copied!';
+    } catch(e) { btn.textContent = '✗ Failed'; }
+    setTimeout(() => btn.textContent = orig, 2000);
+  }
+  async function downloadPNG(btn) {
+    const orig = btn.textContent; btn.textContent = '⏳ ...';
+    try {
+      const el = document.getElementById('report-container');
+      const r = el.getBoundingClientRect();
+      const pad = 32;
+      const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+      const link = document.createElement('a');
+      link.download = 'vigilenseai-architecture.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      btn.textContent = '✓ Done!';
+    } catch(e) { btn.textContent = '✗ Failed'; }
+    setTimeout(() => btn.textContent = orig, 2000);
+  }
+  async function downloadPDF(btn) {
+    const orig = btn.textContent; btn.textContent = '⏳ ...';
+    try {
+      const el = document.getElementById('report-container');
+      const r = el.getBoundingClientRect();
+      const pad = 32;
+      const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+      const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save('vigilenseai-architecture.pdf');
+      btn.textContent = '✓ Done!';
+    } catch(e) { btn.textContent = '✗ Failed'; }
+    setTimeout(() => btn.textContent = orig, 2000);
+  }
+</script>
+</body>
+</html>

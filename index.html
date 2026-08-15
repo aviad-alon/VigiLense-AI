@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VigiLenseAI — Pharmacovigilance Intelligence</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&family=Noto+Sans:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            heading: ['Figtree', 'sans-serif'],
+            body:    ['Noto Sans', 'sans-serif'],
+          },
+          colors: {
+            primary:   '#0891B2',
+            secondary: '#22D3EE',
+            danger:    '#DC2626',
+          },
+          keyframes: {
+            fadeIn:  { '0%': { opacity:'0', transform:'translateY(8px)' }, '100%': { opacity:'1', transform:'translateY(0)' } },
+            floatA:  { '0%,100%': { transform:'translateY(0) rotate(-8deg)' },  '50%': { transform:'translateY(-10px) rotate(-8deg)' } },
+            floatB:  { '0%,100%': { transform:'translateY(0) rotate(14deg)' },  '50%': { transform:'translateY(-14px) rotate(14deg)' } },
+            floatC:  { '0%,100%': { transform:'translateY(0) rotate(-20deg)' }, '50%': { transform:'translateY(-8px) rotate(-20deg)' } },
+            floatD:  { '0%,100%': { transform:'translateY(0) rotate(5deg)' },   '50%': { transform:'translateY(-12px) rotate(5deg)' } },
+            floatE:  { '0%,100%': { transform:'translateY(0) rotate(-30deg)' }, '50%': { transform:'translateY(-9px) rotate(-30deg)' } },
+            floatF:  { '0%,100%': { transform:'translateY(0) rotate(22deg)' },  '50%': { transform:'translateY(-11px) rotate(22deg)' } },
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.4s ease-out',
+            'float-a': 'floatA 4s ease-in-out infinite',
+            'float-b': 'floatB 5s ease-in-out infinite',
+            'float-c': 'floatC 3.5s ease-in-out infinite',
+            'float-d': 'floatD 4.5s ease-in-out infinite',
+            'float-e': 'floatE 6s ease-in-out infinite',
+            'float-f': 'floatF 3.8s ease-in-out infinite',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Noto Sans', sans-serif; background: #080E1A; }
+    h1, h2, h3, .font-heading { font-family: 'Figtree', sans-serif; }
+
+    .glass {
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .glow-primary { box-shadow: 0 0 32px rgba(8,145,178,0.3); }
+    .text-glow    { text-shadow: 0 0 28px rgba(34,211,238,0.55); }
+
+    textarea:focus { outline: none; box-shadow: 0 0 0 2px rgba(8,145,178,0.6), 0 0 20px rgba(8,145,178,0.15); }
+    .prompt-wrapper { border-radius: 12px; background: linear-gradient(135deg, rgba(8,145,178,0.4), rgba(34,211,238,0.1), rgba(8,145,178,0.3)); padding: 1.5px; }
+    .prompt-wrapper textarea { background: #0E1625; border-radius: 10px; width: 100%; }
+
+    /* Neon pill capsule shapes — 3D realistic */
+    .pill {
+      position: absolute;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    /* Glossy highlight stripe at top */
+    .pill-shine {
+      position: absolute;
+      top: 2px; left: 12%; right: 12%;
+      height: 40%;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0) 100%);
+      filter: blur(0.5px);
+    }
+    /* Center seam divider */
+    .pill-seam {
+      position: absolute;
+      top: 8%; bottom: 8%; left: calc(50% - 1px);
+      width: 2px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.0) 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.0) 100%);
+    }
+    /* Bottom shadow edge */
+    .pill-bottom {
+      position: absolute;
+      bottom: 2px; left: 18%; right: 18%;
+      height: 22%;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.25);
+      filter: blur(1px);
+    }
+
+    /* Spinner */
+    .spinner { width:40px; height:40px; border:3px solid rgba(8,145,178,0.2); border-top-color:#0891B2; border-radius:50%; animation:spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Accordion */
+    .step-body { max-height:0; overflow:hidden; transition:max-height 0.35s ease; }
+    .step-body.open { max-height:800px; }
+    .chevron { transition:transform 0.3s ease; }
+    .chevron.open { transform:rotate(180deg); }
+
+    /* Markdown report styles */
+    .prose-report h1 { font-size:1.15rem; font-weight:700; color:#e2e8f0; margin:0 0 0.75rem; font-family:'Figtree',sans-serif; }
+    .prose-report h2 { font-size:0.95rem; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:0.07em; margin:1.2rem 0 0.5rem; font-family:'Figtree',sans-serif; border-bottom:1px solid rgba(255,255,255,0.07); padding-bottom:0.3rem; }
+    .prose-report h3 { font-size:0.875rem; font-weight:600; color:#cbd5e1; margin:0.9rem 0 0.35rem; }
+    .prose-report p  { margin:0.4rem 0; color:#94a3b8; }
+    .prose-report strong { color:#e2e8f0; }
+    .prose-report hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:1rem 0; }
+    .prose-report table { width:100%; border-collapse:collapse; margin:0.6rem 0; font-size:0.8rem; }
+    .prose-report th { background:rgba(255,255,255,0.05); color:#94a3b8; font-weight:600; text-align:left; padding:6px 10px; border:1px solid rgba(255,255,255,0.1); font-family:'Figtree',sans-serif; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; }
+    .prose-report td { padding:6px 10px; border:1px solid rgba(255,255,255,0.07); color:#cbd5e1; vertical-align:top; }
+    .prose-report tr:hover td { background:rgba(255,255,255,0.03); }
+    .prose-report blockquote { border-left:3px solid #0891B2; padding:0.4rem 0.8rem; margin:0.6rem 0; color:#64748b; font-style:italic; background:rgba(8,145,178,0.05); border-radius:0 6px 6px 0; }
+    .prose-report ul,
+    .prose-report ol  { padding-left:1.4rem; margin:0.4rem 0; color:#94a3b8; }
+    .prose-report li  { margin:0.2rem 0; }
+    .prose-report code { background:rgba(0,0,0,0.3); padding:1px 5px; border-radius:4px; font-size:0.82em; color:#7dd3fc; }
+    .prose-report a { color:#22D3EE; text-decoration:underline; text-underline-offset:2px; }
+    .prose-report a:hover { color:#7dd3fc; }
+
+    /* Drug selection buttons */
+    .drug-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 13px 12px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-family: 'Figtree', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      color: #94a3b8;
+    }
+    .drug-btn:hover {
+      background: rgba(255,255,255,0.09);
+      border-color: rgba(255,255,255,0.2);
+      color: #cbd5e1;
+      transform: translateY(-1px);
+    }
+    .drug-btn.active {
+      background: rgba(8,145,178,0.15);
+      border-color: rgba(8,145,178,0.5);
+      color: #22D3EE;
+      box-shadow: 0 0 14px rgba(8,145,178,0.2);
+    }
+
+    ::-webkit-scrollbar { width:6px; }
+    ::-webkit-scrollbar-track { background:#0E1625; }
+    ::-webkit-scrollbar-thumb { background:rgba(8,145,178,0.4); border-radius:3px; }
+
+    /* History panel */
+    .history-panel { max-height:0; overflow:hidden; transition:max-height 0.4s ease; }
+    .history-panel.open { max-height:480px; }
+
+    /* About panel */
+    .about-panel { max-height:0; overflow:hidden; transition:max-height 0.6s ease; }
+    .about-panel.open { max-height:2000px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, .spinner, .pill { animation:none !important; transition:none !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100">
+
+  <!-- Background grid -->
+  <div class="fixed inset-0 pointer-events-none" aria-hidden="true"
+       style="background-image:linear-gradient(rgba(8,145,178,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(8,145,178,0.04) 1px,transparent 1px);background-size:48px 48px;"></div>
+  <div class="fixed top-0 left-1/2 -translate-x-1/2 w-[700px] h-[260px] pointer-events-none"
+       style="background:radial-gradient(ellipse at center,rgba(8,145,178,0.1) 0%,transparent 70%);" aria-hidden="true"></div>
+
+  <div class="relative z-10 max-w-4xl mx-auto px-4 py-10 sm:py-14">
+
+    <!-- ── Header ── -->
+    <header class="text-center mb-10">
+
+      <!-- Title -->
+      <div class="mb-4">
+        <h1 class="font-heading text-4xl sm:text-5xl font-extrabold tracking-tight text-glow"
+            style="background:linear-gradient(90deg,#22D3EE,#fff,#22D3EE);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.25;padding-bottom:6px;">
+          VigiLenseAI
+        </h1>
+      </div>
+
+      <!-- Neon Pills Banner -->
+      <div class="relative mx-auto mb-8 select-none" style="height:90px;max-width:520px;" aria-hidden="true">
+
+        <!-- Pill 1 – pink/magenta -->
+        <div class="pill animate-float-a" style="width:72px;height:28px;left:2%;top:18px;transform:rotate(-8deg);background:radial-gradient(ellipse at 35% 30%, #f0abfc, #a21caf);box-shadow:0 6px 20px rgba(217,70,239,0.5),0 0 28px rgba(217,70,239,0.4),inset 0 -3px 6px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 2 – cyan/blue -->
+        <div class="pill animate-float-b" style="width:60px;height:24px;left:18%;top:8px;transform:rotate(14deg);background:radial-gradient(ellipse at 35% 30%, #7dd3fc, #0369a1);box-shadow:0 6px 18px rgba(56,189,248,0.5),0 0 24px rgba(56,189,248,0.4),inset 0 -3px 6px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 3 – orange -->
+        <div class="pill animate-float-c" style="width:64px;height:26px;left:34%;top:52px;transform:rotate(-20deg);background:radial-gradient(ellipse at 35% 30%, #fdba74, #c2410c);box-shadow:0 6px 18px rgba(251,146,60,0.5),0 0 24px rgba(251,146,60,0.4),inset 0 -3px 6px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 4 – green -->
+        <div class="pill animate-float-d" style="width:54px;height:22px;left:50%;top:10px;transform:rotate(5deg);background:radial-gradient(ellipse at 35% 30%, #86efac, #15803d);box-shadow:0 6px 18px rgba(74,222,128,0.5),0 0 22px rgba(74,222,128,0.4),inset 0 -3px 6px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 5 – yellow -->
+        <div class="pill animate-float-e" style="width:68px;height:26px;left:66%;top:48px;transform:rotate(-30deg);background:radial-gradient(ellipse at 35% 30%, #fde68a, #b45309);box-shadow:0 6px 18px rgba(251,191,36,0.5),0 0 24px rgba(251,191,36,0.4),inset 0 -3px 6px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 6 – violet -->
+        <div class="pill animate-float-f" style="width:58px;height:24px;left:82%;top:12px;transform:rotate(22deg);background:radial-gradient(ellipse at 35% 30%, #c4b5fd, #6d28d9);box-shadow:0 6px 20px rgba(167,139,250,0.5),0 0 26px rgba(167,139,250,0.4),inset 0 -3px 6px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 7 – rose (small) -->
+        <div class="pill animate-float-b" style="width:44px;height:18px;left:8%;top:60px;transform:rotate(12deg);animation-delay:1s;background:radial-gradient(ellipse at 35% 30%, #fda4af, #be123c);box-shadow:0 5px 16px rgba(251,113,133,0.5),0 0 20px rgba(251,113,133,0.4),inset 0 -2px 5px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+        <!-- Pill 8 – teal (small) -->
+        <div class="pill animate-float-c" style="width:48px;height:19px;left:42%;top:6px;transform:rotate(-12deg);animation-delay:0.7s;background:radial-gradient(ellipse at 35% 30%, #5eead4, #0f766e);box-shadow:0 5px 16px rgba(45,212,191,0.5),0 0 20px rgba(45,212,191,0.4),inset 0 -2px 5px rgba(0,0,0,0.3);">
+          <div class="pill-shine"></div><div class="pill-seam"></div><div class="pill-bottom"></div>
+        </div>
+
+      </div>
+
+    </header>
+
+    <!-- ── About VigiLenseAI ── -->
+    <section class="mt-2 mb-6" aria-label="About VigiLenseAI">
+      <button onclick="toggleAbout()" id="about-btn"
+              class="w-full flex items-center justify-between px-6 py-4 glass rounded-2xl hover:bg-white/5 transition-all duration-200 group cursor-pointer border border-white/0 hover:border-white/10">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(8,145,178,0.15);">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/>
+            </svg>
+          </div>
+          <span class="font-heading font-semibold text-slate-200 text-sm tracking-wide">About VigiLenseAI</span>
+        </div>
+        <svg id="about-chevron" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-500 transition-transform duration-300 group-hover:text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+        </svg>
+      </button>
+
+      <div id="about-panel" class="about-panel">
+        <div class="pt-4 space-y-4">
+
+          <!-- Description + Purpose -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="glass rounded-xl p-5 border border-white/5">
+              <p class="text-xs font-heading font-semibold text-secondary uppercase tracking-widest mb-3">What it does</p>
+              <p id="about-description" class="text-slate-400 text-sm leading-relaxed font-body">Loading…</p>
+            </div>
+            <div class="glass rounded-xl p-5 border border-white/5">
+              <p class="text-xs font-heading font-semibold text-secondary uppercase tracking-widest mb-3">Purpose</p>
+              <p id="about-purpose" class="text-slate-400 text-sm leading-relaxed font-body">Loading…</p>
+            </div>
+          </div>
+
+          <!-- Architecture image -->
+          <div class="glass rounded-xl p-5 border border-white/5">
+            <p class="text-xs font-heading font-semibold text-secondary uppercase tracking-widest mb-3">System Architecture</p>
+            <a href="/api/model_architecture" target="_blank" rel="noopener noreferrer" title="Open full size">
+              <img src="/api/model_architecture" alt="VigiLenseAI System Architecture"
+                   class="w-full rounded-lg border border-white/10 hover:border-secondary/40 transition-all duration-200 hover:opacity-90 cursor-zoom-in"
+                   onerror="this.parentElement.parentElement.style.display='none'"/>
+            </a>
+          </div>
+
+          <!-- Team -->
+          <div class="glass rounded-xl p-5 border border-white/5">
+            <p class="text-xs font-heading font-semibold text-secondary uppercase tracking-widest mb-3">Team</p>
+            <div id="about-team" class="flex flex-wrap gap-3">
+              <p class="text-slate-500 text-sm italic">Loading…</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Drug Selection Card ── -->
+    <section class="glass rounded-2xl p-6 sm:p-8 mb-6" aria-label="Drug selection">
+      <p class="font-heading font-bold text-slate-100 text-lg uppercase tracking-widest mb-5 text-center">
+        Select a Drug to Monitor
+      </p>
+
+      <!-- Drug buttons grid — 4 per row, 2 rows -->
+      <div id="drug-grid" class="grid grid-cols-4 gap-3 mb-6">
+        <button class="drug-btn" id="btn-Atorvastatin"  onclick="selectDrug('Atorvastatin')">Atorvastatin</button>
+        <button class="drug-btn" id="btn-Metformin"     onclick="selectDrug('Metformin')">Metformin</button>
+        <button class="drug-btn" id="btn-Warfarin"      onclick="selectDrug('Warfarin')">Warfarin</button>
+        <button class="drug-btn" id="btn-Sildenafil"    onclick="selectDrug('Sildenafil')">Sildenafil</button>
+        <button class="drug-btn" id="btn-Methotrexate"  onclick="selectDrug('Methotrexate')">Methotrexate</button>
+        <button class="drug-btn" id="btn-Lisinopril"    onclick="selectDrug('Lisinopril')">Lisinopril</button>
+        <button class="drug-btn" id="btn-Sertraline"    onclick="selectDrug('Sertraline')">Sertraline</button>
+        <button class="drug-btn" id="btn-Adalimumab"    onclick="selectDrug('Adalimumab')">Adalimumab</button>
+      </div>
+
+      <!-- Free-text / auto-filled query -->
+      <div class="prompt-wrapper mb-6">
+        <textarea
+          id="prompt"
+          rows="3"
+          placeholder="Select a drug above, or type your own query here..."
+          class="block w-full px-4 py-3 text-slate-200 placeholder-slate-500 font-body text-sm leading-relaxed resize-none focus:ring-0 transition-all"
+          aria-label="Pharmacovigilance query"
+        ></textarea>
+      </div>
+
+      <!-- Run Agent – centred -->
+      <div class="flex justify-center mb-4">
+        <button id="run-btn" onclick="runAgent()"
+                class="px-10 py-3 rounded-xl font-heading font-semibold text-white text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-2 glow-primary"
+                style="background:linear-gradient(135deg,#0891B2,#0e7490);"
+                onmouseover="this.style.background='linear-gradient(135deg,#0e7490,#0891B2)'"
+                onmouseout="this.style.background='linear-gradient(135deg,#0891B2,#0e7490)'"
+                aria-label="Run pharmacovigilance agent">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/>
+          </svg>
+          Run Agent
+        </button>
+      </div>
+
+      <!-- Selected drug indicator — below Run Agent -->
+      <div id="selected-indicator" class="hidden mt-4 flex items-center justify-center gap-2 text-sm">
+        <span class="text-slate-500">Monitoring:</span>
+        <span id="selected-name" class="font-heading font-semibold text-secondary"></span>
+      </div>
+
+      <!-- Recent Investigations toggle -->
+      <div class="flex justify-center mt-4">
+        <button onclick="toggleHistory()" id="history-btn"
+                class="flex items-center gap-1.5 text-slate-500 text-xs font-heading hover:text-slate-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          Recent Investigations
+          <svg id="history-chevron" xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- History panel -->
+      <div id="history-panel" class="history-panel">
+        <div class="border-t border-white/5 mt-3 pt-4">
+          <div id="history-list" class="space-y-1 max-h-60 overflow-y-auto pr-1">
+            <p class="text-slate-500 text-xs text-center py-4 italic">Loading…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Loading ── -->
+    <div id="loading" class="hidden glass rounded-2xl p-8 mb-6 text-center animate-fade-in" aria-live="polite">
+      <div class="spinner mx-auto mb-4"></div>
+      <p class="font-heading font-semibold text-secondary text-base">Agent is analyzing...</p>
+      <p class="text-slate-500 text-sm mt-1">Fetching PubMed data &bull; Querying knowledge base &bull; Evaluating risks</p>
+    </div>
+
+    <!-- ── Error ── -->
+    <div id="error-box" class="hidden glass rounded-2xl p-6 mb-6 border border-red-500/30 animate-fade-in" role="alert">
+      <div class="flex items-start gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-red-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+        <div>
+          <p class="font-heading font-semibold text-red-400 text-sm">Agent Error</p>
+          <p id="error-msg" class="text-slate-400 text-sm mt-1"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Results ── -->
+    <div id="results" class="hidden space-y-5 animate-fade-in">
+
+      <section class="glass rounded-2xl p-6 sm:p-8 border border-primary/20" aria-label="Agent response">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:rgba(8,145,178,0.15);">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
+            </svg>
+          </div>
+          <h2 class="font-heading font-semibold text-slate-200">Agent Response</h2>
+        </div>
+        <div id="response-text" class="prose-report text-slate-300 text-sm leading-relaxed font-body"></div>
+      </section>
+
+      <section aria-label="Agent execution steps">
+        <div class="flex items-center gap-2 mb-3">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"/>
+          </svg>
+          <h2 class="font-heading font-semibold text-slate-400 text-sm uppercase tracking-widest">Execution Trace</h2>
+        </div>
+        <div id="steps-container" class="space-y-3"></div>
+      </section>
+    </div>
+
+    <footer class="mt-10"></footer>
+
+  </div>
+
+  <script>
+    const DRUG_QUERIES = {
+      'Atorvastatin':  'Analyze recent PubMed literature on Atorvastatin adverse effects and identify any novel safety signals not in our database.',
+      'Metformin':     'Review the latest PubMed findings on Metformin side effects, especially in elderly patients, and flag any emerging risks.',
+      'Warfarin':      'Search recent PubMed abstracts for novel Warfarin drug interactions or bleeding risk signals beyond known data.',
+      'Sildenafil':    'Analyze recent PubMed literature on Sildenafil adverse cardiovascular effects and flag any novel safety signals.',
+      'Methotrexate':  'Review recent PubMed findings on Methotrexate toxicity, including hepatotoxicity and pulmonary risks, for novel signals.',
+      'Lisinopril':    'Search recent PubMed abstracts on Lisinopril adverse effects and identify any novel angioedema or renal risk signals.',
+      'Sertraline':    'Analyze recent PubMed literature on Sertraline adverse effects in adolescents and flag any novel safety concerns.',
+      'Adalimumab':    'Review the latest PubMed findings on Adalimumab serious infections and malignancy risks for novel safety signals.',
+    };
+
+    let selectedDrug = null;
+
+    function selectDrug(name) {
+      // Deactivate previous
+      if (selectedDrug) {
+        const prev = document.getElementById('btn-' + selectedDrug);
+        if (prev) prev.classList.remove('active');
+      }
+      selectedDrug = name;
+      // Activate new button
+      const btn = document.getElementById('btn-' + name);
+      if (btn) btn.classList.add('active');
+      // Populate textarea with preset query
+      document.getElementById('prompt').value = DRUG_QUERIES[name] || `Analyze recent PubMed literature on ${name} for novel adverse effects.`;
+      // Update indicator
+      document.getElementById('selected-name').textContent = name;
+      document.getElementById('selected-indicator').classList.remove('hidden');
+    }
+
+    function showLoading(show) {
+      document.getElementById('loading').classList.toggle('hidden', !show);
+      const btn = document.getElementById('run-btn');
+      btn.disabled = show;
+      btn.style.opacity = show ? '0.5' : '1';
+      btn.style.cursor  = show ? 'not-allowed' : 'pointer';
+    }
+
+    function showError(msg) {
+      document.getElementById('error-msg').textContent = msg;
+      document.getElementById('error-box').classList.remove('hidden');
+    }
+    function hideError() { document.getElementById('error-box').classList.add('hidden'); }
+
+    function renderSteps(steps) {
+      const container = document.getElementById('steps-container');
+      container.innerHTML = '';
+      if (!steps || steps.length === 0) {
+        container.innerHTML = '<p class="text-slate-500 text-sm italic">No execution steps recorded.</p>';
+        return;
+      }
+      const colors  = ['text-sky-400','text-violet-400','text-emerald-400','text-amber-400','text-rose-400'];
+      const borders = ['border-sky-500/30','border-violet-500/30','border-emerald-500/30','border-amber-500/30','border-rose-500/30'];
+
+      steps.forEach((step, i) => {
+        const id = `step-body-${i}`;
+        const card = document.createElement('div');
+        card.className = `glass rounded-xl border ${borders[i % borders.length]} overflow-hidden`;
+        card.innerHTML = `
+          <button onclick="toggleStep('${id}')"
+                  class="w-full flex items-center justify-between px-5 py-4 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 rounded-xl"
+                  aria-expanded="false" aria-controls="${id}">
+            <div class="flex items-center gap-3">
+              <span class="w-6 h-6 rounded-md flex items-center justify-center text-xs font-heading font-bold ${colors[i % colors.length]}" style="background:rgba(255,255,255,0.06);">${i+1}</span>
+              <span class="font-heading font-semibold text-slate-200 text-sm">${escapeHtml(step.module || 'Step '+(i+1))}</span>
+            </div>
+            <svg id="chevron-${id}" xmlns="http://www.w3.org/2000/svg" class="chevron w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+            </svg>
+          </button>
+          <div id="${id}" class="step-body">
+            <div class="px-5 pb-5 pt-1 space-y-4 border-t border-white/5">
+              <div>
+                <p class="text-xs font-heading font-semibold text-slate-500 uppercase tracking-widest mb-2">Prompt</p>
+                <pre class="text-xs text-slate-300 font-body bg-black/30 rounded-lg p-3 overflow-x-auto leading-relaxed whitespace-pre-wrap">${escapeHtml(fmt(step.prompt))}</pre>
+              </div>
+              <div>
+                <p class="text-xs font-heading font-semibold text-slate-500 uppercase tracking-widest mb-2">Response</p>
+                <pre class="text-xs text-slate-300 font-body bg-black/30 rounded-lg p-3 overflow-x-auto leading-relaxed whitespace-pre-wrap">${escapeHtml(fmt(step.response))}</pre>
+              </div>
+            </div>
+          </div>`;
+        container.appendChild(card);
+      });
+    }
+
+    function toggleStep(id) {
+      const body = document.getElementById(id);
+      const open = body.classList.toggle('open');
+      document.getElementById('chevron-'+id).classList.toggle('open', open);
+      body.previousElementSibling.setAttribute('aria-expanded', String(open));
+    }
+
+    function fmt(v) {
+      if (v == null) return '';
+      if (typeof v === 'string') return v;
+      try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Configure marked to open all links in a new tab
+    const renderer = new marked.Renderer();
+    renderer.link = function(href, title, text) {
+      // handle both old and new marked API (href may be an object)
+      const url   = (typeof href === 'object' && href !== null) ? (href.href || '') : (href || '');
+      const label = (typeof href === 'object' && href !== null) ? (href.text || text || url) : (text || url);
+      const tip   = (typeof href === 'object' && href !== null) ? (href.title || title || '') : (title || '');
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"${tip ? ` title="${escapeHtml(tip)}"` : ''}>${label}</a>`;
+    };
+    marked.use({ renderer });
+
+    // ── Recent Investigations ─────────────────────────────────────────────────
+
+    let historyOpen = false;
+
+    function toggleHistory() {
+      historyOpen = !historyOpen;
+      document.getElementById('history-panel').classList.toggle('open', historyOpen);
+      document.getElementById('history-chevron').style.transform = historyOpen ? 'rotate(180deg)' : '';
+      if (historyOpen) loadHistory();
+    }
+
+    async function loadHistory() {
+      const list = document.getElementById('history-list');
+      list.innerHTML = '<p class="text-slate-500 text-xs text-center py-4 italic">Loading…</p>';
+      try {
+        const res  = await fetch('/api/history?limit=10');
+        const data = await res.json();
+        const runs = data.runs || [];
+        if (runs.length === 0) {
+          list.innerHTML = '<p class="text-slate-500 text-xs text-center py-4 italic">No investigations yet.</p>';
+          return;
+        }
+        list.innerHTML = '';
+        runs.forEach(run => {
+          let badgeClass, badgeText;
+          if (run.is_full_report) {
+            badgeClass = 'bg-emerald-500/15 text-emerald-400';
+            badgeText  = '✓ Report';
+          } else if (run.abort_code) {
+            badgeClass = 'bg-amber-500/15 text-amber-400';
+            badgeText  = '⚠ ' + run.abort_code.replace(/_/g, ' ');
+          } else {
+            badgeClass = 'bg-slate-500/15 text-slate-400';
+            badgeText  = 'Completed';
+          }
+          const btn = document.createElement('button');
+          btn.className = 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/5 text-left transition-colors group cursor-pointer';
+          btn.innerHTML = `
+            <span class="text-slate-600 text-xs w-14 shrink-0 tabular-nums">${timeAgo(run.created_at)}</span>
+            <span class="flex-1 min-w-0 text-slate-400 text-xs truncate group-hover:text-slate-200 transition-colors">${escapeHtml(run.prompt_preview)}</span>
+            <span class="shrink-0 text-xs px-2 py-0.5 rounded-full font-heading ${badgeClass}">${escapeHtml(badgeText)}</span>
+          `;
+          btn.onclick = () => loadHistoryItem(run.response);
+          list.appendChild(btn);
+        });
+      } catch {
+        list.innerHTML = '<p class="text-red-400 text-xs text-center py-4">Failed to load history.</p>';
+      }
+    }
+
+    function loadHistoryItem(response) {
+      // Close history panel
+      historyOpen = false;
+      document.getElementById('history-panel').classList.remove('open');
+      document.getElementById('history-chevron').style.transform = '';
+
+      // Render response in main area
+      const el = document.getElementById('response-text');
+      const raw = response || '(No response)';
+      if (raw.trimStart().startsWith('#') || raw.trimStart().startsWith('**')) {
+        el.innerHTML = marked.parse(raw);
+      } else {
+        el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(raw) + '</pre>';
+      }
+      document.getElementById('steps-container').innerHTML =
+        '<p class="text-slate-500 text-sm italic">Steps not stored for historical runs.</p>';
+      document.getElementById('error-box').classList.add('hidden');
+      document.getElementById('results').classList.remove('hidden');
+      document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function timeAgo(iso) {
+      const diff = (Date.now() - new Date(iso)) / 1000;
+      if (diff < 60)    return 'just now';
+      if (diff < 3600)  return Math.floor(diff / 60)   + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600)  + 'h ago';
+      return                  Math.floor(diff / 86400)  + 'd ago';
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── About panel ──────────────────────────────────────────────────────────
+
+    let aboutOpen = false;
+    let aboutLoaded = false;
+
+    function toggleAbout() {
+      aboutOpen = !aboutOpen;
+      document.getElementById('about-panel').classList.toggle('open', aboutOpen);
+      document.getElementById('about-chevron').style.transform = aboutOpen ? 'rotate(180deg)' : '';
+      if (aboutOpen && !aboutLoaded) loadAbout();
+    }
+
+    async function loadAbout() {
+      aboutLoaded = true;
+      try {
+        const [agentRes, teamRes] = await Promise.all([
+          fetch('/api/agent_info'),
+          fetch('/api/team_info'),
+        ]);
+        const agent = await agentRes.json();
+        const team  = await teamRes.json();
+
+        document.getElementById('about-description').textContent = agent.description || '—';
+        document.getElementById('about-purpose').textContent     = agent.purpose     || '—';
+
+        const teamEl = document.getElementById('about-team');
+        teamEl.innerHTML = '';
+        (team.students || []).forEach(s => {
+          const card = document.createElement('div');
+          card.className = 'flex items-center gap-3 px-4 py-3 rounded-xl border border-white/8 flex-1 min-w-48';
+          card.style.background = 'rgba(255,255,255,0.04)';
+          card.innerHTML = `
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-heading font-bold text-secondary flex-shrink-0" style="background:rgba(8,145,178,0.15);">
+              ${escapeHtml(s.name.charAt(0))}
+            </div>
+            <div>
+              <p class="font-heading font-semibold text-slate-200 text-sm">${escapeHtml(s.name)}</p>
+              <p class="text-slate-500 text-xs font-body">${escapeHtml(s.email)}</p>
+            </div>`;
+          teamEl.appendChild(card);
+        });
+      } catch {
+        document.getElementById('about-description').textContent = 'Failed to load.';
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async function runAgent() {
+      const prompt = document.getElementById('prompt').value.trim();
+      if (!prompt) { document.getElementById('prompt').focus(); return; }
+
+      hideError();
+      document.getElementById('results').classList.add('hidden');
+      showLoading(true);
+
+      try {
+        const res  = await fetch('/api/execute', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt}) });
+        const data = await res.json();
+        if (data.status === 'error' || data.error) {
+          showError(data.error || 'An unknown error occurred.');
+        } else {
+          const rawResponse = data.response || '(No response returned)';
+          const el = document.getElementById('response-text');
+          // Render as markdown if the response starts with '#' or '**' (Markdown)
+          // otherwise show as plain preformatted text
+          if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
+            el.innerHTML = marked.parse(rawResponse);
+          } else {
+            el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(rawResponse) + '</pre>';
+          }
+          renderSteps(data.steps || []);
+          document.getElementById('results').classList.remove('hidden');
+          if (historyOpen) loadHistory(); // refresh history panel if open
+        }
+      } catch {
+        showError('Network error: could not reach the agent. Is the server running?');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+  </script>
+</body>
+</html>
