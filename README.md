@@ -10,7 +10,7 @@ An autonomous pharmacovigilance signal detection agent built on the ReAct (Reaso
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com/)
 [![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=flat-square&logo=vercel&logoColor=white)](https://vercel.com/)
 
-[Overview](#overview) • [Features](#features) • [Getting Started](#getting-started) • [Tools](#tools) • [API Reference](#api-reference) • [Deployment](#deployment)
+[Overview](#overview) • [Features](#features) • [Getting Started](#getting-started) • [Tools](#tools) • [API Reference](#api-reference)
 
 </div>
 
@@ -201,17 +201,9 @@ The bundled knowledge base covers 8 drugs: **Adalimumab**, **Atorvastatin**, **L
 
 If the agent triggers a guardrail, `report_markdown` is `null` and `reasoning` contains the abort message and code.
 
-## Deployment
+## Live demo
 
-The project is pre-configured for Vercel.
-
-1. Push your fork to GitHub.
-2. Import the repository at [vercel.com/new](https://vercel.com/new).
-3. Add all [environment variables](#environment-variables) in the Vercel project settings.
-4. Click **Deploy** — `vercel.json` routes every request to the FastAPI app via `@vercel/python`.
-
-> [!TIP]
-> Vercel's free Hobby plan is sufficient for this project. No additional configuration is required beyond setting the environment variables.
+**[https://vigilense-ai.vercel.app](https://vigilense-ai.vercel.app)**
 
 ## Resources
 
