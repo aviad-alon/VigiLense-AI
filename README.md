@@ -12,19 +12,19 @@
 
 ## Overview
 
-VigiLenseAI investigates potential adverse drug events by autonomously querying medical literature, FDA databases, and an internal knowledge base. Given a natural-language query, the agent iterates through up to 15 Reason → Act → Observe cycles, then produces a structured pharmacovigilance report in CIOMS/ICH E2D format — complete with numbered PubMed citations and a statistical signal assessment (Reporting Odds Ratio + 95% CI).
+VigiLenseAI investigates potential adverse drug events by autonomously querying medical literature, FDA databases, and an internal knowledge base. Given a natural-language query, the agent iterates through up to 15 Reason → Act → Observe cycles, then produces a structured pharmacovigilance report in CIOMS/ICH E2D format -complete with numbered PubMed citations and a statistical signal assessment (Reporting Odds Ratio + 95% CI).
 
 The agent enforces a **zero-fabrication policy**: every claim in the final report must be traceable to a tool response. A built-in guardrail system halts investigations that fall outside the system's scope before any expensive reasoning begins.
 
 ## Features
 
-- **Autonomous ReAct loop** — iterative reasoning with tool calls, terminating on `submit_final_report` or a guardrail trigger
-- **Evidence-grounded reports** — CIOMS/ICH E2D format with numbered PubMed citations; no citation can appear that wasn't retrieved by a tool
-- **RAG knowledge base** — Pinecone vector search over FDA label documents for 8 formulary drugs
-- **Portfolio guardrails** — 6 abort codes reject out-of-scope queries immediately: `drug_not_in_portfolio`, `query_too_vague`, `multiple_drugs_detected`, `non_medical_query`, `drug_not_recognized`, `no_literature_found`
-- **Disproportionality analysis** — Reporting Odds Ratio with 95% CI, computed from OpenFDA FAERS counts
-- **Execution tracing** — every step of the agent's reasoning is returned to the UI for full transparency
-- **Investigation history** — all runs persisted to Supabase and queryable via `/api/history`
+- **Autonomous ReAct loop** -iterative reasoning with tool calls, terminating on `submit_final_report` or a guardrail trigger
+- **Evidence-grounded reports** -CIOMS/ICH E2D format with numbered PubMed citations; no citation can appear that wasn't retrieved by a tool
+- **RAG knowledge base** -Pinecone vector search over FDA label documents for 8 formulary drugs
+- **Portfolio guardrails** -6 abort codes reject out-of-scope queries immediately: `drug_not_in_portfolio`, `query_too_vague`, `multiple_drugs_detected`, `non_medical_query`, `drug_not_recognized`, `no_literature_found`
+- **Disproportionality analysis** -Reporting Odds Ratio with 95% CI, computed from OpenFDA FAERS counts
+- **Execution tracing** -every step of the agent's reasoning is returned to the UI for full transparency
+- **Investigation history** -all runs persisted to Supabase and queryable via `/api/history`
 
 ## Architecture
 
@@ -36,9 +36,9 @@ The full interactive diagram is available at [`architecture.html`](architecture.
 |-------|-----------|
 | Frontend | Vanilla HTML/CSS/JS, served by FastAPI |
 | Backend | FastAPI + Uvicorn |
-| LLM | LLMod.ai — `NBUECSE-gpt-5-mini` (OpenAI-compatible) |
+| LLM | LLMod.ai -`NBUECSE-gpt-5-mini` (OpenAI-compatible) |
 | Vector DB | Pinecone (RAG over FDA label documents) |
-| Relational DB | Supabase (PostgreSQL — `agent_logs` table) |
+| Relational DB | Supabase (PostgreSQL -`agent_logs` table) |
 | Deployment | Vercel (`@vercel/python`) |
 
 ## Getting Started
@@ -103,7 +103,7 @@ Create a `.env` file at the project root with the following keys:
 
 ```
 ├── api/
-│   ├── index.py          # FastAPI app — all HTTP routes and data models
+│   ├── index.py          # FastAPI app -all HTTP routes and data models
 │   ├── agent.py          # ReAct loop, system prompt, citation integrity scrubber
 │   ├── tools.py          # 10 pharmacovigilance tools
 │   ├── config.py         # Shared SDK clients (OpenAI, Pinecone, Supabase)
@@ -123,39 +123,39 @@ Create a `.env` file at the project root with the following keys:
 The agent has access to 10 tools across 5 categories.
 
 > [!IMPORTANT]
-> `query_knowledge_base` is always the mandatory first step. If the drug is not in the formulary, the agent aborts immediately with `drug_not_in_portfolio` — no external API calls are made.
+> `query_knowledge_base` is always the mandatory first step. If the drug is not in the formulary, the agent aborts immediately with `drug_not_in_portfolio` -no external API calls are made.
 
 ### Knowledge base
 
-**`query_knowledge_base`** — Performs a semantic vector search (RAG) over the internal Pinecone index, which stores FDA label content and safety summaries for formulary drugs. Establishes the known-risk baseline before any external retrieval begins.
+**`query_knowledge_base`** -Performs a semantic vector search (RAG) over the internal Pinecone index, which stores FDA label content and safety summaries for formulary drugs. Establishes the known-risk baseline before any external retrieval begins.
 
-**`check_past_signals`** — Queries the Supabase `agent_logs` table to surface any previous investigations on the same drug. Helps the agent understand what signals have already been detected internally.
+**`check_past_signals`** -Queries the Supabase `agent_logs` table to surface any previous investigations on the same drug. Helps the agent understand what signals have already been detected internally.
 
 ### Literature
 
-**`fetch_pubmed_advanced`** — Searches PubMed using boolean query syntax (`"drug" AND ("ae1" OR "ae2")`) and retrieves abstracts from a configurable date range (default: 2020–present). The LLM screens all results for relevance before they are added to the report.
+**`fetch_pubmed_advanced`** -Searches PubMed using boolean query syntax (`"drug" AND ("ae1" OR "ae2")`) and retrieves abstracts from a configurable date range (default: 2020–present). The LLM screens all results for relevance before they are added to the report.
 
-**`search_drug_class_effects`** — Searches PubMed by drug class rather than by a specific drug name. Useful for contextualizing a finding within a broader pharmacological class (e.g. "SGLT2 inhibitors AND ketoacidosis").
+**`search_drug_class_effects`** -Searches PubMed by drug class rather than by a specific drug name. Useful for contextualizing a finding within a broader pharmacological class (e.g. "SGLT2 inhibitors AND ketoacidosis").
 
 ### Drug profile
 
-**`get_drug_profile`** — Resolves a drug name against OpenFDA to retrieve the current FDA label: active ingredients, drug class, mechanism of action, and brand names. Falls back to RxNorm for name normalization when the OpenFDA lookup is ambiguous.
+**`get_drug_profile`** -Resolves a drug name against OpenFDA to retrieve the current FDA label: active ingredients, drug class, mechanism of action, and brand names. Falls back to RxNorm for name normalization when the OpenFDA lookup is ambiguous.
 
 ### Statistics
 
-**`fetch_fda_adverse_events`** — Queries the OpenFDA FAERS database for real-world case counts (drug + adverse event vs. everything else). Returns the 2×2 contingency table values needed for disproportionality analysis.
+**`fetch_fda_adverse_events`** -Queries the OpenFDA FAERS database for real-world case counts (drug + adverse event vs. everything else). Returns the 2×2 contingency table values needed for disproportionality analysis.
 
-**`calculate_disproportionality`** — Computes the Reporting Odds Ratio (ROR) and its 95% confidence interval from a 2×2 contingency table. An ROR lower bound > 1 is treated as a potential disproportionate signal.
+**`calculate_disproportionality`** -Computes the Reporting Odds Ratio (ROR) and its 95% confidence interval from a 2×2 contingency table. An ROR lower bound > 1 is treated as a potential disproportionate signal.
 
 ### Reporting
 
-**`generate_pharmacovigilance_report`** — Assembles the structured Markdown report in CIOMS/ICH E2D format. Sections include: FDA label baseline, novel findings from literature, known/expected findings, and signal assessment. All PubMed citations are rendered as numbered references pointing to real PMIDs retrieved during the investigation.
+**`generate_pharmacovigilance_report`** -Assembles the structured Markdown report in CIOMS/ICH E2D format. Sections include: FDA label baseline, novel findings from literature, known/expected findings, and signal assessment. All PubMed citations are rendered as numbered references pointing to real PMIDs retrieved during the investigation.
 
 ### Control
 
-**`submit_final_report`** — Signals that the investigation is complete. Terminates the ReAct loop and returns the generated report to the caller.
+**`submit_final_report`** -Signals that the investigation is complete. Terminates the ReAct loop and returns the generated report to the caller.
 
-**`abort_investigation`** — Terminates the loop early when a guardrail condition is met. Supported abort codes: `drug_not_in_portfolio`, `query_too_vague`, `multiple_drugs_detected`, `non_medical_query`, `drug_not_recognized`, `no_literature_found`.
+**`abort_investigation`** -Terminates the loop early when a guardrail condition is met. Supported abort codes: `drug_not_in_portfolio`, `query_too_vague`, `multiple_drugs_detected`, `non_medical_query`, `drug_not_recognized`, `no_literature_found`.
 
 ## Formulary
 
@@ -184,7 +184,7 @@ The bundled knowledge base covers 8 drugs: **Adalimumab**, **Atorvastatin**, **L
 **Response:**
 ```json
 {
-  "report_markdown": "## Pharmacovigilance Report — Metformin ...",
+  "report_markdown": "## Pharmacovigilance Report -Metformin ...",
   "reasoning": null,
   "steps": [
     { "step": 1, "thought": "...", "action": "query_knowledge_base", "observation": "..." },
@@ -197,8 +197,8 @@ If the agent triggers a guardrail, `report_markdown` is `null` and `reasoning` c
 
 ## Resources
 
-- [PubMed API](https://www.ncbi.nlm.nih.gov/home/develop/api/) — biomedical literature retrieval
-- [OpenFDA API](https://open.fda.gov/apis/) — drug labels and FAERS adverse event database
-- [RxNorm API](https://lhncbc.nlm.nih.gov/RxNav/APIs/RxNormAPIs.html) — drug name normalization
-- [ICH E2D Guideline](https://www.ich.org/page/pharmacovigilance-guidelines) — post-approval pharmacovigilance reporting standard
-- [ReAct: Synergizing Reasoning and Acting in Language Models](https://arxiv.org/abs/2210.03629) — the agent architecture this project is based on
+- [PubMed API](https://www.ncbi.nlm.nih.gov/home/develop/api/) -biomedical literature retrieval
+- [OpenFDA API](https://open.fda.gov/apis/) -drug labels and FAERS adverse event database
+- [RxNorm API](https://lhncbc.nlm.nih.gov/RxNav/APIs/RxNormAPIs.html) -drug name normalization
+- [ICH E2D Guideline](https://www.ich.org/page/pharmacovigilance-guidelines) -post-approval pharmacovigilance reporting standard
+- [ReAct: Synergizing Reasoning and Acting in Language Models](https://arxiv.org/abs/2210.03629) -the agent architecture this project is based on
