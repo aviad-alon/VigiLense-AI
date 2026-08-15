@@ -2,9 +2,6 @@
 
 # VigiLenseAI
 
-An autonomous pharmacovigilance signal detection agent built on the ReAct (Reason → Act → Observe) architecture.
-
-
 **Live demo: [https://vigilense-ai.vercel.app](https://vigilense-ai.vercel.app)**
 
 [Overview](#overview) • [Features](#features) • [Getting Started](#getting-started) • [Tools](#tools) • [API Reference](#api-reference)
