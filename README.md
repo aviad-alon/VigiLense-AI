@@ -10,6 +10,8 @@ An autonomous pharmacovigilance signal detection agent built on the ReAct (Reaso
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com/)
 [![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=flat-square&logo=vercel&logoColor=white)](https://vercel.com/)
 
+**Live demo: [https://vigilense-ai.vercel.app](https://vigilense-ai.vercel.app)**
+
 [Overview](#overview) • [Features](#features) • [Getting Started](#getting-started) • [Tools](#tools) • [API Reference](#api-reference)
 
 </div>
@@ -200,10 +202,6 @@ The bundled knowledge base covers 8 drugs: **Adalimumab**, **Atorvastatin**, **L
 ```
 
 If the agent triggers a guardrail, `report_markdown` is `null` and `reasoning` contains the abort message and code.
-
-## Live demo
-
-**[https://vigilense-ai.vercel.app](https://vigilense-ai.vercel.app)**
 
 ## Resources
 
