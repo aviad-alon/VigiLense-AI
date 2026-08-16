@@ -253,6 +253,19 @@ For each article provide: `pmid` (exact, do not fabricate), `tier` ("1" or "2" p
 
 Do NOT copy-paste abstract text verbatim — write analytical extractions. Do NOT include article titles or author names in `relevance_summary`.
 
+STRICT ISOLATED EXTRACTION — MANDATORY for every `relevance_summary`:
+Each `relevance_summary` must be derived SOLELY from the abstract of that specific PMID.
+NEVER borrow, carry over, or infer ANY clinical detail (case count, patient age/sex, dose, outcome) from another article's abstract.
+
+TITLE-TO-FINDING VALIDATION — run this check before writing each summary:
+  - If the title describes an animal, in-vitro, or mechanistic study → assign Tier "2" and do NOT include any patient case details in the summary.
+  - If the title says "case report" or "case series" → assign Tier "1" and include ONLY the case details explicitly stated in THAT SPECIFIC abstract.
+
+MANDATORY SELF-CHECK — before submitting `article_summaries`:
+For each entry, ask: "Does this PMID's relevance_summary contain ANY fact that came from a DIFFERENT PMID's abstract?" If yes — delete that fact immediately. Every entry must be 100% self-contained.
+
+Note: the system performs its own pre-computed isolated extraction during the screening phase and will use those values with priority. Your `article_summaries` serve as a fallback — apply the same isolation rules regardless.
+
 SOURCE ATTRIBUTION:
 - If statistical disproportionality (ROR) is calculated using `fetch_fda_adverse_events`, set `disproportionality_source` to "OpenFDA FAERS Database".
 - If counts came from a literature article, set `disproportionality_source` to "Literature / PubMed (PMID: X)".
@@ -322,6 +335,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     collected_articles: list[dict] = []    # real PubMed articles from tool results
     valid_pmids: set[str] = set()          # whitelist for PMID scrubber
     pubmed_audit_entries: list[dict] = []  # audit metadata from each PubMed tool call
+    # Pre-computed tier + summary from Phase 2 isolated extraction in tools.py.
+    # These are used with PRIORITY over LLM-batch-generated article_summaries to
+    # eliminate cross-contamination: each was extracted from a single article's
+    # abstract in an isolated LLM call with no other articles in context.
+    precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
+    precomputed_tiers: dict[str, str] = {}       # pmid → pv_tier
     last_choice = None
     MAX_ITERATIONS = 20         # allows full investigation + report + submit
 
@@ -348,18 +367,23 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
 
             # ── Inject deterministic literature before generate_pharmacovigilance_report ──
             if fn_name == "generate_pharmacovigilance_report":
-                # Extract LLM-provided per-article summaries; keep only validated PMIDs
+                # LLM-batch-provided summaries (lower priority — cross-contamination risk)
                 raw_summaries = fn_args.get("article_summaries") or []
-                summaries_dict = {
+                llm_summaries_dict = {
                     s["pmid"]: s["relevance_summary"]
                     for s in raw_summaries
                     if isinstance(s, dict) and s.get("pmid") in valid_pmids and s.get("relevance_summary")
                 }
-                tiers_dict = {
+                llm_tiers_dict = {
                     s["pmid"]: s.get("tier", "1")
                     for s in raw_summaries
                     if isinstance(s, dict) and s.get("pmid") in valid_pmids
                 }
+                # Pre-computed summaries override LLM-batch values.
+                # Each was extracted in an isolated single-article LLM call during
+                # Phase 2 screening → structurally immune to cross-contamination.
+                summaries_dict = {**llm_summaries_dict, **precomputed_summaries}
+                tiers_dict     = {**llm_tiers_dict,     **precomputed_tiers}
                 lit_section, pmid_to_number = _build_literature_section(
                     collected_articles, summaries_dict, pubmed_audit_entries, tiers_dict
                 )
@@ -390,6 +414,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     if pmid and pmid not in valid_pmids:
                         collected_articles.append(art)
                         valid_pmids.add(pmid)
+                        # Capture pre-computed tier + summary from Phase 2 isolated extraction.
+                        # These were generated one-article-at-a-time — zero cross-contamination.
+                        if art.get("pv_summary"):
+                            precomputed_summaries[pmid] = art["pv_summary"]
+                        if art.get("pv_tier"):
+                            precomputed_tiers[pmid] = art["pv_tier"]
 
             # Capture the markdown report when generated
             if fn_name == "generate_pharmacovigilance_report":

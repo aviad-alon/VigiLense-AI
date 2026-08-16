@@ -790,14 +790,24 @@ def _screen_articles_llm(
     investigation_context: str,
 ) -> list[dict]:
     """
-    LLM-based batch relevance screening.
-    Sends articles in batches of SCREENING_BATCH_SIZE to the LLM and returns
-    only those judged relevant to the investigation context.
-    Fails open (includes all articles) if the LLM call errors.
+    Two-phase LLM pipeline for article screening and summarization.
+
+    Phase 1 — Batch relevance screening: sends articles in batches of SCREENING_BATCH_SIZE
+    to quickly identify relevant PMIDs. Fails open (includes all) on error.
+
+    Phase 2 — Per-article isolated extraction: for each relevant article, one dedicated
+    LLM call extracts tier + summary from ONLY that article's abstract.
+    One call per article = ZERO cross-contamination between papers.
+
+    Pre-computed tier/summary are stored on each article dict as:
+        art["pv_tier"]    — "1" or "2"
+        art["pv_summary"] — concise analytical extraction
+    These are later used by agent.py with priority over LLM-batch-generated summaries.
     """
     if not articles or not llm_client:
         return articles
 
+    # ── Phase 1: Batch relevance screening ───────────────────────────────────
     relevant: list[dict] = []
 
     for batch_start in range(0, len(articles), SCREENING_BATCH_SIZE):
@@ -857,7 +867,103 @@ def _screen_articles_llm(
             print(f"[PubMed screening error — batch {batch_start // SCREENING_BATCH_SIZE + 1}] {exc}")
             relevant.extend(batch)  # fail-open
 
+    # ── Phase 2: Per-article isolated tier + summary extraction ──────────────
+    _extract_article_summaries(relevant, investigation_context)
+
     return relevant
+
+
+def _extract_article_summaries(
+    articles: list[dict],
+    investigation_context: str,
+) -> None:
+    """
+    Extract tier and relevance_summary for each article INDIVIDUALLY.
+
+    One dedicated LLM call per article — the model sees ONLY that article's
+    abstract, title, and PMID. This architectural isolation makes cross-
+    contamination between articles structurally impossible.
+
+    Mutates each article dict in-place:
+        art["pv_tier"]    — "1" (actionable) or "2" (background)
+        art["pv_summary"] — concise analytical extraction matching the tier format
+
+    Failures are silent and non-blocking: an article without pv_tier/pv_summary
+    falls back to the LLM-generated summary in generate_pharmacovigilance_report.
+    """
+    if not articles or not llm_client:
+        return
+
+    for art in articles:
+        pmid     = art.get("pmid", "")
+        title    = art.get("title", "Unknown title")
+        abstract = (art.get("abstract") or "")[:2000]  # full abstract, capped at 2 k chars
+
+        prompt = (
+            "You are a Pharmacovigilance Literature Analyst.\n\n"
+            f"Investigation Context:\n{investigation_context}\n\n"
+            "Analyze the SINGLE article delimited below and provide:\n"
+            "  1. tier: '1' (actionable) or '2' (background)\n"
+            "  2. summary: a concise analytical extraction\n\n"
+            "TIER CLASSIFICATION:\n"
+            "  '1' = ACTIONABLE — use when the article provides:\n"
+            "    - A direct case report or case series with actual patient occurrences of the target AE.\n"
+            "    - A clinical trial or cohort with statistically significant AE incidence or risk.\n"
+            "    - A novel safety alert or pharmacovigilance database study with case counts.\n"
+            "  '2' = BACKGROUND — use when the article is:\n"
+            "    - A general narrative review with no original case data.\n"
+            "    - A mechanistic, animal, or in-vitro study with no patient AE reports.\n"
+            "    - A PK/PD study not reporting the target AE.\n"
+            "    - A study explicitly concluding no occurrences of the target AE.\n\n"
+            "SUMMARY FORMAT:\n"
+            "  Tier 1: 1-2 tight sentences — case count or risk metric, dose/timing if known, "
+            "clinical outcome. No titles or author names.\n"
+            "    Example: 'Case series (n=3, males 45-62 yrs): drug 50-100 mg associated with "
+            "AE onset within 24h of ingestion; partial recovery in 2/3 cases.'\n"
+            "  Tier 2: Single line only: 'No [target AE] reported; [one-sentence mechanistic "
+            "or contextual note].'\n"
+            "    Example: 'No NAION reported; supports systemic hypotension as a plausible "
+            "mechanism via PDE5-mediated vasodilation.'\n\n"
+            "=== CRITICAL ISOLATION RULE ===\n"
+            "Your tier and summary must be derived EXCLUSIVELY from the single abstract below.\n"
+            "NEVER include information from any other source, memory, or prior article.\n"
+            "TITLE-TO-FINDING VALIDATION — mandatory before writing the summary:\n"
+            "  - If the title describes an animal, preclinical, or mechanistic study:\n"
+            "    → Assign Tier '2'. DO NOT write patient case details (n=X, age, sex, dose).\n"
+            "  - If the title says 'case report' or 'case series':\n"
+            "    → Assign Tier '1'. Include ONLY case details explicitly stated in THIS abstract.\n"
+            "SELF-CHECK: Ask yourself: 'Does my summary contain ANY fact not present verbatim\n"
+            "in the abstract below?' If yes — remove it before responding.\n"
+            "================================\n\n"
+            f"=== ARTICLE | PMID: {pmid} ===\n"
+            f"Title: {title}\n"
+            f"Abstract: {abstract}\n"
+            f"=== END ARTICLE | PMID: {pmid} ===\n\n"
+            "Respond with JSON only (no explanation, no markdown fences):\n"
+            '{"tier": "1" or "2", "summary": "your extraction here"}'
+        )
+
+        try:
+            resp = llm_client.chat.completions.create(
+                model=CHAT_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+            )
+            raw = resp.choices[0].message.content.strip()
+            if "```" in raw:
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+            extracted = json.loads(raw)
+            if isinstance(extracted, dict):
+                if extracted.get("tier") in ("1", "2"):
+                    art["pv_tier"] = extracted["tier"]
+                if isinstance(extracted.get("summary"), str) and extracted["summary"].strip():
+                    art["pv_summary"] = extracted["summary"].strip()
+        except Exception as exc:
+            print(f"[Article summary extraction error — PMID {pmid}] {exc}")
+            # Fail gracefully — article remains without pv_tier/pv_summary;
+            # agent.py will fall back to the LLM-provided summary at report time.
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
