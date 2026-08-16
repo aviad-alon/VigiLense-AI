@@ -14,25 +14,25 @@
 
 ### The problem
 
-Every pharmaceutical company is legally required to continuously monitor the safety of its approved drugs — a discipline known as pharmacovigilance. When a potential adverse drug event surfaces (from a patient report, a clinical study, or a regulatory signal), a safety analyst must:
+Every pharmaceutical company is legally required to continuously monitor the safety of its approved drugs -a discipline known as pharmacovigilance. When a potential adverse drug event surfaces (from a patient report, a clinical study, or a regulatory signal), a safety analyst must:
 
 - Search recent medical literature for relevant findings
 - Retrieve the current FDA drug label to understand the known risk profile
 - Query real-world adverse event databases (such as FDA FAERS) to quantify how frequently the event is reported
-- Assess whether the finding constitutes a novel, unexpected signal — or a known, expected one
+- Assess whether the finding constitutes a novel, unexpected signal -or a known, expected one
 - Synthesize all of the above into a structured safety report following international standards (CIOMS/ICH E2D)
 
 This process is time-consuming, repetitive, and highly sensitive to human error. A single missed citation or unsupported conclusion can have serious regulatory consequences.
 
 ### What was done before
 
-Until now, this work was done almost entirely manually. Analysts would open PubMed in one tab, FDA databases in another, and a Word template in a third — copying, cross-referencing, and writing by hand. Some organizations use rules-based tools that automate parts of the literature search, but none integrate the full pipeline end-to-end, and none can reason about findings the way a trained analyst would.
+Until now, this work was done almost entirely manually. Analysts would open PubMed in one tab, FDA databases in another, and a Word template in a third -copying, cross-referencing, and writing by hand. Some organizations use rules-based tools that automate parts of the literature search, but none integrate the full pipeline end-to-end, and none can reason about findings the way a trained analyst would.
 
 ### Our solution
 
-VigiLenseAI is an AI agent that conducts the full pharmacovigilance investigation from a single natural-language query. The analyst types what they want to investigate — and the agent searches the literature, retrieves the drug profile, queries FAERS, calculates the statistical signal, and writes the report, all on its own.
+VigiLenseAI is an AI agent that conducts the full pharmacovigilance investigation from a single natural-language query. The analyst types what they want to investigate -and the agent searches the literature, retrieves the drug profile, queries FAERS, calculates the statistical signal, and writes the report, all on its own.
 
-The system is designed to operate within a **specific company's drug portfolio**. It only investigates drugs that the company has pre-loaded into its internal knowledge base. If a drug is not in the company's portfolio, the agent refuses the query immediately — ensuring that resources are spent only on drugs the company is actually responsible for monitoring, and that the knowledge base used for comparison is always internally consistent.
+The system is designed to operate within a **specific company's drug portfolio**. It only investigates drugs that the company has pre-loaded into its internal knowledge base. If a drug is not in the company's portfolio, the agent refuses the query immediately -ensuring that resources are spent only on drugs the company is actually responsible for monitoring, and that the knowledge base used for comparison is always internally consistent.
 
 ### Why this matters
 
@@ -53,11 +53,11 @@ At the core of VigiLenseAI is a ReAct agent loop implemented in [`api/agent.py`]
 3. **Observe** - the tool result is added to the context
 4. Repeat, up to a maximum of 15 iterations
 
-The loop terminates in one of two ways: the agent calls `submit_final_report` when it has gathered enough evidence, or it calls `abort_investigation` if a guardrail condition is met. No result is ever fabricated — every claim in the final report must trace directly to a tool response.
+The loop terminates in one of two ways: the agent calls `submit_final_report` when it has gathered enough evidence, or it calls `abort_investigation` if a guardrail condition is met. No result is ever fabricated -every claim in the final report must trace directly to a tool response.
 
 ### The tools
 
-At each iteration, the agent reasons about what information it still needs and independently decides which tool to call next. There is no fixed sequence — the agent may search PubMed before or after retrieving the drug profile, may call a tool multiple times with different parameters, or may skip tools that aren't relevant to the specific query. The loop runs for as many iterations as the investigation requires, up to a maximum of 15. If the agent has gathered enough evidence earlier, it ends the investigation before reaching that limit.
+At each iteration, the agent reasons about what information it still needs and independently decides which tool to call next. There is no fixed sequence -the agent may search PubMed before or after retrieving the drug profile, may call a tool multiple times with different parameters, or may skip tools that aren't relevant to the specific query. The loop runs for as many iterations as the investigation requires, up to a maximum of 15. If the agent has gathered enough evidence earlier, it ends the investigation before reaching that limit.
 
 The 10 available tools are:
 
@@ -97,7 +97,7 @@ The full interactive diagram is available at [`architecture.html`](architecture.
 | Backend | FastAPI + Uvicorn |
 | LLM | LLMod.ai (`NBUECSE-gpt-5-mini`, OpenAI-compatible) |
 | Vector DB | Pinecone (RAG over FDA label documents) |
-| Relational DB | Supabase (PostgreSQL — `agent_logs` table) |
+| Relational DB | Supabase (PostgreSQL -`agent_logs` table) |
 | Deployment | Vercel (`@vercel/python`) |
 
 ### Formulary
