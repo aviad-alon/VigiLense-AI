@@ -668,15 +668,25 @@
       showLoading(true);
 
       try {
-        const res  = await fetch('/api/execute', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt}) });
-        const data = await res.json();
+        const res = await fetch('/api/execute', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt}) });
+
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          showError(
+            res.status === 504
+              ? 'The investigation timed out. Try a more specific query or wait a moment and retry.'
+              : `Server error (${res.status}). Please try again.`
+          );
+          return;
+        }
+
         if (data.status === 'error' || data.error) {
           showError(data.error || 'An unknown error occurred.');
         } else {
           const rawResponse = data.response || '(No response returned)';
           const el = document.getElementById('response-text');
-          // Render as markdown if the response starts with '#' or '**' (Markdown)
-          // otherwise show as plain preformatted text
           if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
             el.innerHTML = marked.parse(rawResponse);
           } else {
@@ -684,7 +694,7 @@
           }
           renderSteps(data.steps || []);
           document.getElementById('results').classList.remove('hidden');
-          if (historyOpen) loadHistory(); // refresh history panel if open
+          if (historyOpen) loadHistory();
         }
       } catch {
         showError('Network error: could not reach the agent. Is the server running?');
