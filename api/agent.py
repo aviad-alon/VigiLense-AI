@@ -267,7 +267,7 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     valid_pmids: set[str] = set()          # whitelist for PMID scrubber
     pubmed_audit_entries: list[dict] = []  # audit metadata from each PubMed tool call
     last_choice = None
-    MAX_ITERATIONS = 15         # raised to 15 — allows full investigation + report + submit
+    MAX_ITERATIONS = 25         # raised to 25 — allows full investigation + report + submit
 
     for _ in range(MAX_ITERATIONS):
 
