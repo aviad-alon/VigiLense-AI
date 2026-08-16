@@ -25,28 +25,39 @@ def _build_literature_section(
     tiers: dict | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
-    Render a two-tier literature section from real PubMed tool results.
+    Render a dual-section literature block from real PubMed tool results.
     All metadata (PMID, title, authors, journal, URL) is 100% deterministic — the LLM never touches it.
 
-    Tier 1 (actionable): case reports, clinical trials, safety alerts → full numbered entry.
-    Tier 2 (background): reviews, mechanistic/animal studies, no direct AE cases → grouped note only.
+    Section 1 — Main view (Actionable):
+        Tier 1 articles (case reports, trials, safety alerts) in concise 2-line bullet format,
+        numbered with their UNIFIED continuous index.
+
+    Section 2 — Collapsible <details> block (All screened):
+        ALL screened articles numbered 1..N with unified continuous index.
+        - Tier 1 (1..K):   repeated with full entry (title + key finding)
+        - Tier 2 (K+1..N): 1-line summary note per article (background / no direct AE data)
 
     Returns:
         section_text    — the formatted Markdown string
-        pmid_to_number  — mapping of PMID → article number (1-indexed, Tier 1 only)
+        pmid_to_number  — mapping of ALL PMIDs → continuous article number (1-indexed)
     """
     summaries = summaries or {}
     tiers     = tiers     or {}
 
-    # Only articles with a validated LLM-provided summary
+    # Articles that have a summary (either pre-computed or LLM-provided)
     relevant = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
 
     # Split by tier (default = "1" if not specified)
     tier1 = [a for a in relevant if tiers.get(a["pmid"], "1") == "1"]
     tier2 = [a for a in relevant if tiers.get(a["pmid"], "1") == "2"]
 
-    # Citation map — only Tier 1 articles get numbered
-    pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(tier1)}
+    # Articles that passed screening but have no summary (Phase 2 failure edge-case)
+    summarized_pmids = {a["pmid"] for a in relevant}
+    no_summary = [a for a in articles if a.get("pmid") and a["pmid"] not in summarized_pmids]
+
+    # ── Unified continuous numbering: Tier 1 first (1..K), then Tier 2, then no-summary ──
+    all_ordered = tier1 + tier2 + no_summary
+    pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(all_ordered)}
 
     total_unique_screened = len(articles)
     total_included        = len(relevant)
@@ -82,50 +93,93 @@ def _build_literature_section(
             )
         parts.append("\n".join(audit_lines))
 
-    # ── Tier 2 grouped note ───────────────────────────────────────────────────
-    if tier2:
-        parts.append(
-            f"> **Background Literature ({len(tier2)} paper{'s' if len(tier2) != 1 else ''}):** "
-            f"Reviewed but contained no direct case reports or statistically significant safety data "
-            f"for the investigated adverse event. Counted in pipeline audit above."
-        )
-
-    # ── Tier 1 actionable entries ─────────────────────────────────────────────
+    # ── Section 1: Actionable literature — main view ──────────────────────────
     if not tier1:
         parts.append(
             "*No actionable articles with direct adverse event reports were identified "
             "in the retrieved literature.*"
         )
-        return "\n\n".join(parts), pmid_to_number
-
-    parts.append(f"**Actionable Literature — Direct AE Evidence (n={len(tier1)})**")
-
-    items = []
-    for i, art in enumerate(tier1, 1):
-        pmid    = art.get("pmid", "")
-        title   = (art.get("title") or "Unknown title").strip()
-        authors = art.get("authors") or []
-        pubdate = (art.get("pubdate") or "").strip()
-        journal = (art.get("source") or "").strip()
-
-        author_str = (
-            f"{authors[0]} et al." if len(authors) > 1
-            else (authors[0] if authors else "Unknown")
+    else:
+        parts.append(
+            f"**Actionable Literature — Direct AE Evidence "
+            f"({len(tier1)} article{'s' if len(tier1) != 1 else ''})**"
         )
-        link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
+        items = []
+        for art in tier1:
+            pmid       = art.get("pmid", "")
+            n          = pmid_to_number[pmid]
+            title      = (art.get("title") or "Unknown title").strip()
+            authors    = art.get("authors") or []
+            pubdate    = (art.get("pubdate") or "").strip()
+            journal    = (art.get("source") or "").strip()
+            author_str = (
+                f"{authors[0]} et al." if len(authors) > 1
+                else (authors[0] if authors else "Unknown")
+            )
+            link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
 
-        line  = f"**{i}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
-        line += f"\n**Key Finding:** {summaries[pmid]}"
-        items.append(line)
+            line  = f"**{n}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
+            line += f"\n   **Key Finding:** {summaries[pmid]}"
+            items.append(line)
 
-    parts.append("\n\n---\n\n".join(items))
+        parts.append("\n\n".join(items))
+
+    # ── Section 2: Collapsible — all screened articles ────────────────────────
+    n_all = len(all_ordered)
+    if n_all > 0:
+        def _art_header(art: dict) -> str:
+            pmid       = art.get("pmid", "")
+            n          = pmid_to_number.get(pmid, "?")
+            title      = (art.get("title") or "Unknown title").strip()
+            authors    = art.get("authors") or []
+            pubdate    = (art.get("pubdate") or "").strip()
+            journal    = (art.get("source") or "").strip()
+            author_str = (
+                f"{authors[0]} et al." if len(authors) > 1
+                else (authors[0] if authors else "Unknown")
+            )
+            link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
+            return f"**{n}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
+
+        collapsible_items: list[str] = []
+
+        # Tier 1 in collapsible — full entry (mirrors main view)
+        for art in tier1:
+            pmid = art.get("pmid", "")
+            collapsible_items.append(
+                _art_header(art) + f"\n   **Key Finding:** {summaries[pmid]}"
+            )
+
+        # Tier 2 in collapsible — 1-line summary note
+        for art in tier2:
+            pmid         = art.get("pmid", "")
+            summary_note = summaries.get(pmid, "No direct AE data.")
+            collapsible_items.append(
+                _art_header(art) + f"\n   *{summary_note}*"
+            )
+
+        # Articles with no summary — title + PMID only
+        for art in no_summary:
+            collapsible_items.append(_art_header(art))
+
+        collapsible_block = (
+            f"<details>\n"
+            f"<summary>Click to expand all {n_all} screened PubMed articles</summary>\n"
+            "\n"
+            + "\n\n".join(collapsible_items)
+            + "\n\n</details>"
+        )
+        parts.append(collapsible_block)
+
     return "\n\n".join(parts), pmid_to_number
 
 
 def _replace_pmid_citations(text: str, pmid_to_number: dict, valid_pmids: set) -> str:
     """
-    Convert PMID references in LLM-generated text to numbered citations:
-    - [PMID: 12345678] → [3]  (if PMID appears as article #3 in the literature section)
+    Convert PMID references in LLM-generated text to unified continuous index citations.
+
+    pmid_to_number now covers ALL screened articles (Tier 1 and Tier 2):
+    - [PMID: 12345678] → [3]   if the PMID is article #3 in the unified master list
     - Unknown/hallucinated PMIDs → [citation not retrieved]
     """
     def _replace(m):
