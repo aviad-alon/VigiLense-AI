@@ -30,7 +30,7 @@ Until now, this work was done almost entirely manually. Analysts would open PubM
 
 ### Our solution
 
-VigiLenseAI is an autonomous AI agent that conducts the full pharmacovigilance investigation from a single natural-language query. The analyst types what they want to investigate — and the agent searches the literature, retrieves the drug profile, queries FAERS, calculates the statistical signal, and writes the report, all on its own.
+VigiLenseAI is an AI agent that conducts the full pharmacovigilance investigation from a single natural-language query. The analyst types what they want to investigate — and the agent searches the literature, retrieves the drug profile, queries FAERS, calculates the statistical signal, and writes the report, all on its own.
 
 The system is designed to operate within a **specific company's drug portfolio**. It only investigates drugs that the company has pre-loaded into its internal knowledge base. If a drug is not in the company's portfolio, the agent refuses the query immediately — ensuring that resources are spent only on drugs the company is actually responsible for monitoring, and that the knowledge base used for comparison is always internally consistent.
 
