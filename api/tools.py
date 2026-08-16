@@ -755,7 +755,7 @@ PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fc
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
 SCREENING_BATCH_SIZE  = 50   # articles per LLM screening call
-MAX_PUBMED_SCREEN     = 200  # cap on articles fetched when screening is active
+MAX_PUBMED_SCREEN     = 50   # cap on articles fetched when screening is active
 
 
 def _screen_articles_llm(
