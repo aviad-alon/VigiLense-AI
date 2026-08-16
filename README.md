@@ -1,6 +1,6 @@
 <div align="center">
 
-# VigiLenseAI
+<img src="logo.png" alt="VigiLenseAI" width="600" />
 
 **Live demo: [https://vigilense-ai.vercel.app](https://vigilense-ai.vercel.app)**
 
