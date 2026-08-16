@@ -33,17 +33,29 @@ The loop terminates in one of two ways: the agent calls `submit_final_report` wh
 
 ### The tools
 
-The 10 tools are organized around the natural flow of a pharmacovigilance investigation:
+At each iteration, the agent reasons about what information it still needs and independently decides which tool to call next. There is no fixed sequence — the agent may search PubMed before or after retrieving the drug profile, may call a tool multiple times with different parameters, or may skip tools that aren't relevant to the specific query. The loop runs for as many iterations as the investigation requires, up to a maximum of 15. If the agent has gathered enough evidence earlier, it ends the investigation before reaching that limit.
 
-**Step 1 — Check the portfolio.** The agent always starts with `query_knowledge_base`, which performs a semantic vector search (RAG) over a Pinecone index containing FDA label content and safety summaries for 8 formulary drugs. If the queried drug is not in the portfolio, the agent aborts immediately with `drug_not_in_portfolio` before any external API call is made. If the drug is found, `check_past_signals` queries Supabase for any previous investigations on the same drug.
+The 10 available tools are:
 
-**Step 2 — Retrieve the drug profile.** `get_drug_profile` resolves the drug name against OpenFDA to fetch the current label: active ingredients, drug class, mechanism of action, and brand names. It falls back to RxNorm for normalization when the OpenFDA lookup is ambiguous.
+**`query_knowledge_base`** - Performs a semantic vector search (RAG) over a Pinecone index containing FDA label content and safety summaries for the 8 formulary drugs. This is the one tool the agent is always required to call first, to verify the drug is in the portfolio before doing anything else.
 
-**Step 3 — Search the literature.** `fetch_pubmed_advanced` searches PubMed using boolean query syntax and retrieves abstracts from 2020 to present. The LLM screens all results for relevance before they enter the report. For broader context, `search_drug_class_effects` performs the same search at the drug-class level rather than for a specific compound.
+**`check_past_signals`** - Queries the Supabase `agent_logs` table to surface any previous investigations on the same drug, so the agent can build on prior findings rather than starting from scratch.
 
-**Step 4 — Quantify the signal.** `fetch_fda_adverse_events` queries the OpenFDA FAERS database for real-world case counts, returning the 2×2 contingency table values needed for disproportionality analysis. `calculate_disproportionality` then computes the Reporting Odds Ratio (ROR) with 95% CI from those counts. An ROR lower bound above 1 is flagged as a potential disproportionate signal.
+**`get_drug_profile`** - Resolves the drug name against OpenFDA to retrieve the current FDA label: active ingredients, drug class, mechanism of action, and brand names. Falls back to RxNorm for normalization when the OpenFDA lookup is ambiguous.
 
-**Step 5 — Write and submit.** `generate_pharmacovigilance_report` assembles the final Markdown report in CIOMS/ICH E2D format, with sections for the FDA label baseline, novel findings, known findings, and signal assessment. All PubMed citations are rendered as numbered references linked to real PMIDs. Once the report is ready, `submit_final_report` ends the loop and returns the result.
+**`fetch_pubmed_advanced`** - Searches PubMed using boolean query syntax (`"drug" AND ("ae1" OR "ae2")`) and retrieves abstracts from a configurable date range (default: 2020–present). The LLM screens all retrieved abstracts for relevance before they are included.
+
+**`search_drug_class_effects`** - Same as above but searches by drug class rather than by a specific compound name, useful for contextualizing a finding within a broader pharmacological class (e.g. "SGLT2 inhibitors AND ketoacidosis").
+
+**`fetch_fda_adverse_events`** - Queries the OpenFDA FAERS database for real-world case counts for a drug–event pair, returning the 2×2 contingency table values needed for disproportionality analysis.
+
+**`calculate_disproportionality`** - Computes the Reporting Odds Ratio (ROR) and its 95% confidence interval from a 2×2 contingency table. An ROR lower bound above 1 is treated as a potential disproportionate signal.
+
+**`generate_pharmacovigilance_report`** - Assembles the structured Markdown report in CIOMS/ICH E2D format, with sections for the FDA label baseline, novel findings from literature, known/expected findings, and signal assessment. All PubMed citations are rendered as numbered references pointing to real PMIDs retrieved during the investigation.
+
+**`submit_final_report`** - Called by the agent when it has completed the investigation. Terminates the ReAct loop and returns the report to the caller.
+
+**`abort_investigation`** - Terminates the loop early when a guardrail condition is met (see below).
 
 ### Guardrails
 
