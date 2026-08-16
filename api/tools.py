@@ -465,6 +465,20 @@ TOOLS = [
                             },
                             "required": ["pmid", "relevance_summary"]
                         }
+                    },
+                    "case_counts": {
+                        "type": "object",
+                        "description": (
+                            "Raw 2×2 contingency table cell counts — pass when ROR was calculated so the "
+                            "report displays the underlying absolute case numbers alongside the statistical metrics. "
+                            "Use the a/b/c/d values returned by fetch_fda_adverse_events or extracted from literature."
+                        ),
+                        "properties": {
+                            "a": {"type": "integer", "description": "Drug + target AE cases"},
+                            "b": {"type": "integer", "description": "Drug + other AE cases (drug total minus a)"},
+                            "c": {"type": "integer", "description": "Other drugs + target AE cases"},
+                            "d": {"type": "integer", "description": "Background: other drugs + other AEs"}
+                        }
                     }
                 },
                 "required": [
@@ -1074,6 +1088,21 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         except requests.exceptions.Timeout:
             raise TimeoutError("OpenFDA FAERS API timed out.")
 
+    def _count_by(field: str, search: str, limit: int = 10) -> list:
+        """Fetch a count breakdown by field from FAERS (non-blocking — returns [] on any failure)."""
+        try:
+            resp = requests.get(
+                OPENFDA_FAERS_URL,
+                params={"search": search, "count": field, "limit": limit},
+                timeout=FAERS_TIMEOUT
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            return resp.json().get("results", [])
+        except Exception:
+            return []
+
     try:
         drug_q  = f'patient.drug.medicinalproduct:"{drug_name}"'
         event_q = f'patient.reaction.reactionmeddrapt:"{adverse_event}"'
@@ -1098,6 +1127,35 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         c = max(0, total_event - a)
         d = max(0, total_all   - total_drug - total_event + a)
 
+        # ── Demographics — non-blocking (failures return empty structures) ────────
+        sex_map = {"0": "Unknown", "1": "Male", "2": "Female"}
+        age_map = {
+            "1": "Neonate (0–27 days)", "2": "Infant (28 days–23 months)",
+            "3": "Child (2–11 years)",  "4": "Adolescent (12–17 years)",
+            "5": "Adult (18–64 years)", "6": "Elderly (65+ years)"
+        }
+
+        sex_raw  = _count_by("patient.patientsex",         drug_q)
+        age_raw  = _count_by("patient.patientagegroup",    drug_q)
+        drug_raw = _count_by("patient.drug.medicinalproduct.exact", drug_q, limit=10)
+
+        demographics_sex = {
+            sex_map.get(str(r["term"]), str(r["term"])): r["count"]
+            for r in sex_raw
+        } if sex_raw else {}
+
+        demographics_age = {
+            age_map.get(str(r["term"]), str(r["term"])): r["count"]
+            for r in age_raw
+        } if age_raw else {}
+
+        drug_name_lower = drug_name.lower()
+        concomitant_drugs = [
+            {"drug": r["term"], "count": r["count"]}
+            for r in drug_raw
+            if r.get("term", "").lower() != drug_name_lower
+        ][:5]
+
         return {
             "a":            a,
             "b":            b,
@@ -1110,7 +1168,12 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
             "counts_note":  (
                 f"a={a} (drug+event), b={b} (drug, other events), "
                 f"c={c} (other drugs, this event), d={d} (background)"
-            )
+            ),
+            "demographics": {
+                "sex_distribution":    demographics_sex,
+                "age_groups":          demographics_age,
+                "top_concomitant_drugs": concomitant_drugs
+            }
         }
 
     except TimeoutError as e:
@@ -1281,6 +1344,7 @@ def generate_pharmacovigilance_report(
     ci_95: list[float] | None = None,
     disproportionality_source: str | None = None,
     literature_section: str | None = None,    # Python-injected by agent.py — NOT from LLM
+    case_counts: dict | None = None,          # raw 2×2 a/b/c/d values for transparent reporting
 ) -> dict:
     """
     Generate a standardized Pharmacovigilance Evaluation Report in Markdown.
@@ -1307,6 +1371,20 @@ def generate_pharmacovigilance_report(
         table_rows = f"{ror_line}\n{ci_line}\n{sig_line}"
         if src_line:
             table_rows += f"\n{src_line}"
+
+        # Append 2×2 raw case counts when provided
+        if case_counts:
+            a = case_counts.get("a", "N/A")
+            b = case_counts.get("b", "N/A")
+            c = case_counts.get("c", "N/A")
+            d = case_counts.get("d", "N/A")
+            table_rows += (
+                "\n| **— 2×2 Matrix —** | |"
+                f"\n| Drug + AE (a) | {a} |"
+                f"\n| Drug + Other AEs (b) | {b} |"
+                f"\n| Other Drugs + AE (c) | {c} |"
+                f"\n| Background (d) | {d} |"
+            )
 
         stats_section = (
             "## Statistical Disproportionality Analysis\n\n"
@@ -1424,7 +1502,7 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
         return generate_pharmacovigilance_report(**_filter(fn_args, {
             "drug_name", "adverse_event", "is_significant",
             "summary_findings", "recommendations", "ror", "ci_95",
-            "disproportionality_source", "literature_section"
+            "disproportionality_source", "literature_section", "case_counts"
         }))
     if fn_name == "submit_final_report":
         return submit_final_report(**_filter(fn_args, {

@@ -41,29 +41,41 @@ def _build_literature_section(
     # Build PMID → article number map for citation conversion in summary_findings
     pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(relevant)}
 
+    # Global pipeline counts for the audit summary row
+    total_unique_screened = len(articles)   # deduplicated across all queries
+    total_included        = len(relevant)   # those with agent-provided summaries
+    total_excluded_deep   = total_unique_screened - total_included
+
     parts = []
 
     # ── Audit header ─────────────────────────────────────────────────────────
     if audit_entries:
         audit_lines = ["**PubMed Retrieval Audit**\n"]
         for e in audit_entries:
-            found   = e.get("total_found", 0)
-            fetched = e.get("total_fetched", 0)
-            dr      = e.get("date_range", "")
-            query   = e.get("query", "")
-            relevant_count = e.get("total_relevant")
+            found    = e.get("total_found", 0)
+            fetched  = e.get("total_fetched", 0)
+            screened = e.get("total_relevant", fetched)   # after LLM screening pass
+            dr       = e.get("date_range", "")
+            query    = e.get("query", "")
             if found == 0:
                 coverage = "0 articles found"
-            elif relevant_count is not None:
-                coverage = (
-                    f"{found} found · {fetched} fetched · "
-                    f"screened {fetched} (100%) · **{relevant_count} included**"
-                )
-            elif fetched >= found:
-                coverage = f"{found} found · {fetched} fetched · **100% coverage**"
             else:
-                coverage = f"{found} found · {fetched} fetched (top {fetched} by relevance)"
+                coverage = (
+                    f"Found: {found} | Fetched: {fetched} | LLM-screened: {screened}"
+                )
             audit_lines.append(f"- `{query}` — {dr} — {coverage}")
+
+        # Global summary row — shows full pipeline including deep-screening exclusions
+        if total_unique_screened > 0:
+            excl_note = (
+                f" (excluded during deep screening: {total_excluded_deep}"
+                " — e.g., non-clinical, no direct AE data)"
+                if total_excluded_deep > 0 else ""
+            )
+            audit_lines.append(
+                f"\n**Pipeline summary:** {total_unique_screened} unique articles after LLM screening"
+                f" → **{total_included} included in detailed breakdown**{excl_note}"
+            )
         parts.append("\n".join(audit_lines))
 
     if not relevant:
@@ -147,6 +159,24 @@ Toolbox Guidance (Use tools dynamically as needed):
   STAGE 2 (FAERS Fallback): If literature was retrieved but contains NO explicit numerical counts, do NOT skip statistical analysis. Instead, invoke `fetch_fda_adverse_events(drug_name, adverse_event)` to retrieve real-world case counts from OpenFDA FAERS. If the tool returns valid a/b/c/d values (all non-null), pass them to `calculate_disproportionality`. Tag the source as "OpenFDA FAERS Database" when calling `generate_pharmacovigilance_report`.
   NO DATA: If both stages yield no usable counts (FAERS returned an error or null values), do NOT fabricate any numbers. Proceed to `generate_pharmacovigilance_report` without ROR (leave ror=null) and note the absence of quantitative data in `summary_findings`.
 - Deliverables: Use `generate_pharmacovigilance_report` to format the Markdown report, and invoke `submit_final_report` when you are ready to conclude the investigation.
+  When calling `generate_pharmacovigilance_report` and you have FAERS disproportionality data, ALWAYS pass `case_counts` with the raw a/b/c/d values from `fetch_fda_adverse_events` so the 2×2 matrix appears in the statistics table.
+  When `fetch_fda_adverse_events` returns demographic data (gender, age groups, top concomitant drugs), include a concise demographics summary in the Signal Assessment section of `summary_findings`.
+
+FDA LABEL CROSS-MAPPING — NEAREST TERM MATCHING:
+When checking the Internal KB / FDA Label Baseline for an adverse event:
+1. First call `query_knowledge_base` with the EXACT reported adverse event term (e.g., "spinal cord infarction").
+2. If no exact match is documented, MANDATORY secondary check: call `query_knowledge_base` again with overlapping or anatomically adjacent terms from the same organ system or mechanism. Examples:
+   - For spinal cord events: also query "transverse myelitis", "spinal ischemia", "ischemic stroke", "NAION"
+   - For cardiac events: also query "arrhythmia", "QTc prolongation", "sudden cardiac death"
+   - For hepatic events: also query "hepatotoxicity", "liver injury", "elevated transaminases"
+3. Report BOTH levels of matching in the Internal KB / FDA Label Baseline section — exact matches and adjacent-term matches separately.
+
+DEDUPLICATION RULE:
+Do NOT label any article as a duplicate unless it shares an IDENTICAL PMID or IDENTICAL TITLE with another already-processed article. Different papers on the same topic, same drug, or same adverse event are NOT duplicates. Never write "(Duplicate...)" or "(Same as...)" in any `relevance_summary`. Every distinct PMID is a distinct article.
+
+LITERATURE SUMMARY FORMAT in `article_summaries`:
+- For articles that DIRECTLY REPORT the investigated adverse event (case reports, clinical observations, pharmacovigilance database studies with case counts): provide a FULL multi-sentence analytical summary covering study design, population, quantitative safety findings, dose/timing details, and mechanistic insights.
+- For articles that do NOT report the target adverse event (general safety studies, mechanistic background papers, PK/PD studies): condense to a SINGLE concise line: "No [target AE] reported; [one-sentence context — e.g., 'supports systemic hypotension as a plausible mechanism']."
 
 Autonomous Operating Rules:
 1. Before every tool call, explain your reasoning (Thought) for why this specific tool/query is needed next.
