@@ -22,28 +22,34 @@ def _build_literature_section(
     articles: list,
     summaries: dict | None = None,
     audit_entries: list | None = None,
+    tiers: dict | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
-    Render a numbered, hyperlinked literature list from real PubMed tool results.
+    Render a two-tier literature section from real PubMed tool results.
     All metadata (PMID, title, authors, journal, URL) is 100% deterministic — the LLM never touches it.
 
-    Only articles with a validated LLM-provided drug-specific summary are included.
-    Articles without a summary are excluded — they contain no relevant drug findings.
-    Prepends a PubMed Retrieval Audit block.
+    Tier 1 (actionable): case reports, clinical trials, safety alerts → full numbered entry.
+    Tier 2 (background): reviews, mechanistic/animal studies, no direct AE cases → grouped note only.
 
     Returns:
         section_text    — the formatted Markdown string
-        pmid_to_number  — mapping of PMID → article number (1-indexed) for citation replacement
+        pmid_to_number  — mapping of PMID → article number (1-indexed, Tier 1 only)
     """
     summaries = summaries or {}
-    # Keep only articles that have a validated drug-specific summary
-    relevant = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
-    # Build PMID → article number map for citation conversion in summary_findings
-    pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(relevant)}
+    tiers     = tiers     or {}
 
-    # Global pipeline counts for the audit summary row
-    total_unique_screened = len(articles)   # deduplicated across all queries
-    total_included        = len(relevant)   # those with agent-provided summaries
+    # Only articles with a validated LLM-provided summary
+    relevant = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
+
+    # Split by tier (default = "1" if not specified)
+    tier1 = [a for a in relevant if tiers.get(a["pmid"], "1") == "1"]
+    tier2 = [a for a in relevant if tiers.get(a["pmid"], "1") == "2"]
+
+    # Citation map — only Tier 1 articles get numbered
+    pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(tier1)}
+
+    total_unique_screened = len(articles)
+    total_included        = len(relevant)
     total_excluded_deep   = total_unique_screened - total_included
 
     parts = []
@@ -54,18 +60,15 @@ def _build_literature_section(
         for e in audit_entries:
             found    = e.get("total_found", 0)
             fetched  = e.get("total_fetched", 0)
-            screened = e.get("total_relevant", fetched)   # after LLM screening pass
+            screened = e.get("total_relevant", fetched)
             dr       = e.get("date_range", "")
             query    = e.get("query", "")
-            if found == 0:
-                coverage = "0 articles found"
-            else:
-                coverage = (
-                    f"Found: {found} | Fetched: {fetched} | LLM-screened: {screened}"
-                )
+            coverage = (
+                "0 articles found" if found == 0
+                else f"Found: {found} | Fetched: {fetched} | LLM-screened: {screened}"
+            )
             audit_lines.append(f"- `{query}` — {dr} — {coverage}")
 
-        # Global summary row — shows full pipeline including deep-screening exclusions
         if total_unique_screened > 0:
             excl_note = (
                 f" (excluded during deep screening: {total_excluded_deep}"
@@ -74,30 +77,45 @@ def _build_literature_section(
             )
             audit_lines.append(
                 f"\n**Pipeline summary:** {total_unique_screened} unique articles after LLM screening"
-                f" → **{total_included} included in detailed breakdown**{excl_note}"
+                f" → **{total_included} included** "
+                f"({len(tier1)} actionable / {len(tier2)} background){excl_note}"
             )
         parts.append("\n".join(audit_lines))
 
-    if not relevant:
-        parts.append("*No articles with drug-specific findings were identified in the retrieved literature.*")
+    # ── Tier 2 grouped note ───────────────────────────────────────────────────
+    if tier2:
+        parts.append(
+            f"> **Background Literature ({len(tier2)} paper{'s' if len(tier2) != 1 else ''}):** "
+            f"Reviewed but contained no direct case reports or statistically significant safety data "
+            f"for the investigated adverse event. Counted in pipeline audit above."
+        )
+
+    # ── Tier 1 actionable entries ─────────────────────────────────────────────
+    if not tier1:
+        parts.append(
+            "*No actionable articles with direct adverse event reports were identified "
+            "in the retrieved literature.*"
+        )
         return "\n\n".join(parts), pmid_to_number
 
-    parts.append(f"**Articles with Drug-Specific Findings (n={len(relevant)})**")
+    parts.append(f"**Actionable Literature — Direct AE Evidence (n={len(tier1)})**")
 
-    # ── Article list (only articles with LLM-validated summaries) ─────────────
     items = []
-    for i, art in enumerate(relevant, 1):
-        pmid     = art.get("pmid", "")
-        title    = (art.get("title") or "Unknown title").strip()
-        authors  = art.get("authors") or []
-        pubdate  = (art.get("pubdate") or "").strip()
-        journal  = (art.get("source") or "").strip()
+    for i, art in enumerate(tier1, 1):
+        pmid    = art.get("pmid", "")
+        title   = (art.get("title") or "Unknown title").strip()
+        authors = art.get("authors") or []
+        pubdate = (art.get("pubdate") or "").strip()
+        journal = (art.get("source") or "").strip()
 
-        author_str = f"{authors[0]} et al." if len(authors) > 1 else (authors[0] if authors else "Unknown")
+        author_str = (
+            f"{authors[0]} et al." if len(authors) > 1
+            else (authors[0] if authors else "Unknown")
+        )
         link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
 
-        line = f"**{i}.** **{title}**\n{author_str} · *{journal}* · {pubdate} · {link}"
-        line += f"\n\n**Key Drug-Specific Findings:**\n{summaries[pmid]}"
+        line  = f"**{i}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
+        line += f"\n**Key Finding:** {summaries[pmid]}"
         items.append(line)
 
     parts.append("\n\n---\n\n".join(items))
@@ -174,9 +192,26 @@ When checking the Internal KB / FDA Label Baseline for an adverse event:
 DEDUPLICATION RULE:
 Do NOT label any article as a duplicate unless it shares an IDENTICAL PMID or IDENTICAL TITLE with another already-processed article. Different papers on the same topic, same drug, or same adverse event are NOT duplicates. Never write "(Duplicate...)" or "(Same as...)" in any `relevance_summary`. Every distinct PMID is a distinct article.
 
-LITERATURE SUMMARY FORMAT in `article_summaries`:
-- For articles that DIRECTLY REPORT the investigated adverse event (case reports, clinical observations, pharmacovigilance database studies with case counts): provide a FULL multi-sentence analytical summary covering study design, population, quantitative safety findings, dose/timing details, and mechanistic insights.
-- For articles that do NOT report the target adverse event (general safety studies, mechanistic background papers, PK/PD studies): condense to a SINGLE concise line: "No [target AE] reported; [one-sentence context — e.g., 'supports systemic hypotension as a plausible mechanism']."
+TWO-TIER ARTICLE CLASSIFICATION in `article_summaries`:
+Every article MUST include a `tier` field. Classify BEFORE writing the summary:
+
+TIER "1" — ACTIONABLE (renders full entry in the report). Use when the article meets ANY of:
+  - Direct case report or case series documenting actual patient occurrences of the target AE.
+  - Clinical trial or cohort study reporting statistically significant incidence, risk ratio, or HR for the target AE.
+  - Novel safety alert or pharmacovigilance database study (FAERS, VigiBase, WHO) with direct case counts.
+  Default to "1" if uncertain.
+
+TIER "2" — BACKGROUND (omitted from individual entries; counted in grouped note only). Use when:
+  - General safety narrative review with no original case data.
+  - Mechanistic, animal, or in-vitro study with no patient AE reports.
+  - PK/PD study not reporting the target AE.
+  - Study explicitly concluding no occurrences of the target AE.
+
+`relevance_summary` format by tier:
+  Tier 1 → 1-2 tight sentences: state case count or risk metric, dose/timing if known, clinical outcome. No titles or author names.
+    Example: "Case series (n=3, males 45–62 yrs): sildenafil 50–100 mg associated with acute NAION onset within 24h of ingestion; visual recovery partial in 2/3 cases."
+  Tier 2 → Single line only: "No [target AE] reported; [one-sentence mechanistic or contextual note]."
+    Example: "No NAION reported; supports systemic hypotension as a plausible mechanism via PDE5-mediated vasodilation."
 
 Autonomous Operating Rules:
 1. Before every tool call, explain your reasoning (Thought) for why this specific tool/query is needed next.
@@ -212,20 +247,11 @@ Overall evidence quality, signal strength, and confidence. Use bullet points for
 Do NOT include article titles or author names — cite only with [PMID: XXXXXXXX].
 
 ARTICLE SUMMARIES — `article_summaries` IN `generate_pharmacovigilance_report`:
-INCLUDE ALL articles returned by fetch_pubmed_advanced or search_drug_class_effects in `article_summaries`.
-Every article returned by those tools has already passed an LLM screening stage that confirmed relevance — do NOT skip any of them.
+INCLUDE ALL articles returned by fetch_pubmed_advanced or search_drug_class_effects — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools.
 
-For each article, provide a detailed `relevance_summary` covering ALL of the following present in the abstract:
-  - "pmid": the exact PMID string as returned by the tool (do NOT fabricate or guess PMIDs)
-  - "relevance_summary": covering:
-      • Study design and patient population (e.g., "RCT, n=450, adults with MDD receiving sertraline 50–200 mg/day")
-      • Efficacy findings specific to the target drug (response/remission rates, effect sizes, comparators, p-values)
-      • Safety and adverse event findings specific to the target drug (incidence rates, severity, onset timing, dose-dependency)
-      • Subgroup results where the target drug data differs across populations (age, sex, comorbidities)
-      • Mechanistic or pharmacological insights regarding the target drug
-      • If the paper discusses a drug class broadly but includes specific data on the target drug, highlight those target drug details explicitly.
-Do NOT copy-paste sentences from the abstract verbatim. Write an analytical extraction in your own words.
-Example: "RCT (n=450, MDD patients) comparing sertraline 50–200 mg/day vs. placebo over 12 weeks. Sertraline arm achieved 52% response rate vs. 35% placebo (p<0.01, NNT=6). QTc prolongation ≥60 ms observed in 4.2% of sertraline patients, dose-dependent and concentrated above 150 mg/day. Authors attribute cardiac effects to off-target hERG channel inhibition at supratherapeutic concentrations."
+For each article provide: `pmid` (exact, do not fabricate), `tier` ("1" or "2" per TWO-TIER ARTICLE CLASSIFICATION above), and `relevance_summary` (format per tier above).
+
+Do NOT copy-paste abstract text verbatim — write analytical extractions. Do NOT include article titles or author names in `relevance_summary`.
 
 SOURCE ATTRIBUTION:
 - If statistical disproportionality (ROR) is calculated using `fetch_fda_adverse_events`, set `disproportionality_source` to "OpenFDA FAERS Database".
@@ -329,8 +355,13 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     for s in raw_summaries
                     if isinstance(s, dict) and s.get("pmid") in valid_pmids and s.get("relevance_summary")
                 }
+                tiers_dict = {
+                    s["pmid"]: s.get("tier", "1")
+                    for s in raw_summaries
+                    if isinstance(s, dict) and s.get("pmid") in valid_pmids
+                }
                 lit_section, pmid_to_number = _build_literature_section(
-                    collected_articles, summaries_dict, pubmed_audit_entries
+                    collected_articles, summaries_dict, pubmed_audit_entries, tiers_dict
                 )
                 fn_args["literature_section"] = lit_section
                 if "summary_findings" in fn_args:

@@ -440,8 +440,8 @@ TOOLS = [
                         "type": "array",
                         "description": (
                             "INCLUDE ALL articles returned by fetch_pubmed_advanced or search_drug_class_effects. "
-                            "Every returned article has already passed LLM screening — do NOT skip any. "
-                            "ONLY include PMIDs actually returned by those tool calls — do NOT fabricate PMIDs."
+                            "Every returned article has passed LLM screening — do NOT skip any. "
+                            "ONLY use PMIDs actually returned by those tool calls — do NOT fabricate."
                         ),
                         "items": {
                             "type": "object",
@@ -450,20 +450,33 @@ TOOLS = [
                                     "type": "string",
                                     "description": "The PMID exactly as returned by the PubMed tool."
                                 },
+                                "tier": {
+                                    "type": "string",
+                                    "enum": ["1", "2"],
+                                    "description": (
+                                        "Tier classification controlling how this article is rendered in the report:\n"
+                                        "'1' = ACTIONABLE — article directly reports the investigated adverse event via: "
+                                        "case report/series with patient cases; clinical trial/cohort with statistically significant risk or incidence; "
+                                        "or novel safety alert. → Full entry rendered in report.\n"
+                                        "'2' = BACKGROUND — general review, mechanistic/animal study, PK/PD paper, "
+                                        "or any study with NO direct cases of the target adverse event. "
+                                        "→ Omitted from individual entries; grouped into a single note. "
+                                        "Default to '1' if uncertain."
+                                    )
+                                },
                                 "relevance_summary": {
                                     "type": "string",
                                     "description": (
-                                        "Detailed analytical extraction covering: study design and population; "
-                                        "efficacy findings (rates, effect sizes, p-values); "
-                                        "safety/adverse event findings (incidence, severity, dose-dependency); "
-                                        "subgroup differences; mechanistic insights. "
-                                        "Example: 'RCT (n=450, MDD) — sertraline 50–200 mg/day vs placebo. "
-                                        "52% response vs 35% (p<0.01). QTc prolongation ≥60ms in 4.2% at >150 mg/day, "
-                                        "attributed to hERG channel inhibition.'"
+                                        "Written according to tier:\n"
+                                        "Tier 1: 1-2 tight sentences stating case count, relative risk, or clinical safety outcome. "
+                                        "No titles/author names. Example: 'Case series (n=3, males 45–62): sildenafil 50–100 mg "
+                                        "associated with acute NAION onset within 24h; partial visual recovery in 2/3 cases.'\n"
+                                        "Tier 2: Single line only: 'No [target AE] reported; [one-sentence mechanistic context].' "
+                                        "Example: 'No NAION reported; supports systemic hypotension as plausible mechanism via PDE5 vasodilation.'"
                                     )
                                 }
                             },
-                            "required": ["pmid", "relevance_summary"]
+                            "required": ["pmid", "tier", "relevance_summary"]
                         }
                     },
                     "case_counts": {
@@ -1355,10 +1368,28 @@ def generate_pharmacovigilance_report(
     signal_badge = "🔴 SIGNIFICANT SAFETY SIGNAL" if is_significant else "🟢 NO SIGNIFICANT SIGNAL"
 
     if ror is not None:
-        ror_line = f"| **Calculated ROR** | {ror} |"
-        ci_line  = f"| **95% CI** | [{ci_95[0]}, {ci_95[1]}] |" if ci_95 else "| **95% CI** | N/A |"
-        sig_line = f"| **Significant?** | {'Yes — ROR ≥ 2.0 and lower CI > 1.0' if is_significant else 'No'} |"
-        src_line = f"| **Data Source** | {disproportionality_source} |" if disproportionality_source else ""
+        ci_str     = f"(95% CI: {ci_95[0]}, {ci_95[1]})" if ci_95 else "(95% CI: N/A)"
+        sig_status = "🔴 Significant — ROR ≥ 2.0 and lower CI > 1.0" if is_significant else "🟢 Not Significant"
+
+        table_rows = (
+            f"| **Calculated ROR** | {ror} {ci_str} |\n"
+            f"| **Signal Status** | {sig_status} |"
+        )
+
+        if case_counts:
+            a = case_counts.get("a", "N/A")
+            b = case_counts.get("b", "N/A")
+            c = case_counts.get("c", "N/A")
+            d = case_counts.get("d", "N/A")
+            table_rows += (
+                f"\n| **Cases: Drug + AE (a)** | {a} |"
+                f"\n| **Cases: Drug + Other AEs (b)** | {b} |"
+                f"\n| **Cases: Other Drugs + AE (c)** | {c} |"
+                f"\n| **Background Cases (d)** | {d} |"
+            )
+
+        if disproportionality_source:
+            table_rows += f"\n| **Data Source** | {disproportionality_source} |"
 
         faers_note = ""
         if disproportionality_source and "FAERS" in disproportionality_source:
@@ -1368,28 +1399,10 @@ def generate_pharmacovigilance_report(
                 "to enable disproportionality analysis.\n"
             )
 
-        table_rows = f"{ror_line}\n{ci_line}\n{sig_line}"
-        if src_line:
-            table_rows += f"\n{src_line}"
-
-        # Append 2×2 raw case counts when provided
-        if case_counts:
-            a = case_counts.get("a", "N/A")
-            b = case_counts.get("b", "N/A")
-            c = case_counts.get("c", "N/A")
-            d = case_counts.get("d", "N/A")
-            table_rows += (
-                "\n| **— 2×2 Matrix —** | |"
-                f"\n| Drug + AE (a) | {a} |"
-                f"\n| Drug + Other AEs (b) | {b} |"
-                f"\n| Other Drugs + AE (c) | {c} |"
-                f"\n| Background (d) | {d} |"
-            )
-
         stats_section = (
             "## Statistical Disproportionality Analysis\n\n"
-            "| Metric | Value |\n"
-            "|--------|-------|\n"
+            "| Metric / Parameter | Value / Data |\n"
+            "| :--- | :--- |\n"
             f"{table_rows}\n"
             "\n> Significance criterion: ROR ≥ 2.0 AND lower 95% CI > 1.0\n"
             f"{faers_note}"
