@@ -384,7 +384,13 @@ REASON template: "No relevant medical literature was found on PubMed for '[drug 
 ─── CASE 6: drug_not_in_portfolio ───
 TRIGGER: `query_knowledge_base` returns drug_in_formulary=false. This is always your FIRST tool call — fire this abort immediately without calling any other tool.
 ACTION: abort_code = "drug_not_in_portfolio"
-REASON template (SHORT — 1-2 sentences only): '[drug_name]' is not in the organization's pharmacovigilance portfolio according to the internal knowledge base. This system only performs signal detection for drugs held in the company's portfolio."""
+REASON template (SHORT — 1-2 sentences only): '[drug_name]' is not in the organization's pharmacovigilance portfolio according to the internal knowledge base. This system only performs signal detection for drugs held in the company's portfolio.
+
+─── CASE 7: no_adverse_event_specified ───
+TRIGGER: The prompt names a valid drug but contains no specific adverse event or safety concern to investigate. Examples that trigger this case: "general adverse event profile for Warfarin", "tell me about Metformin side effects", "Warfarin safety overview", "what are the risks of Sertraline".
+DO NOT TRIGGER if: the prompt contains any specific AE term (e.g. "bleeding", "hepatotoxicity", "neuropathy", "rash", "QTc prolongation", "bruxism", "infection", "malignancy", "lactic acidosis"). Even a broad category like "cardiovascular risk" or "serious infections" is sufficient — do NOT abort in that case.
+ACTION: abort_code = "no_adverse_event_specified". Call abort_investigation WITHOUT calling any other tool first.
+REASON template: "The query does not specify an adverse event to investigate for '[drug_name]'. This system is designed to detect signals for a specific adverse event. Please re-submit with a target adverse event — for example: 'Investigate bleeding risk for Warfarin' or 'Are there novel hepatotoxicity signals for Warfarin?'." """
 
 
 # ── ReAct Loop ────────────────────────────────────────────────────────────────

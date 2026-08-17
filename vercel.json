@@ -2,12 +2,14 @@
   "builds": [
     {
       "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxDuration": 300
-      }
+      "use": "@vercel/python"
     }
   ],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300
+    }
+  },
   "routes": [
     {
       "src": "/(.*)",
