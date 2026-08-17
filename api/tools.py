@@ -806,8 +806,8 @@ def calculate_disproportionality(
 PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
-SCREENING_BATCH_SIZE  = 15   # articles per LLM screening call
-MAX_PUBMED_SCREEN     = 15   # cap on articles fetched when screening is active
+SCREENING_BATCH_SIZE  = 30   # articles per LLM screening call
+MAX_PUBMED_SCREEN     = 30   # cap on articles fetched when screening is active
 
 
 def _screen_articles_llm(
