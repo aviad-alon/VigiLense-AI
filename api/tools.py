@@ -428,13 +428,19 @@ TOOLS = [
                         "type": "string",
                         "description": (
                             "Analytical interpretation structured in four markdown sections. "
-                            "Use bullet points (`-`) to list individual items within each section — do NOT write long paragraphs:\n"
-                            "### Internal KB / FDA Label Baseline — bullet list of what the label already documents.\n"
-                            "### Novel Findings — bullet list of new adverse events not in the label. "
+                            "Use bullet points (`-`) to list individual items within each section — do NOT write long paragraphs.\n\n"
+                            "SCOPE RULE: Every bullet in every section MUST directly concern the INVESTIGATED AE "
+                            "or a clinically adjacent finding in the same organ system/mechanism. "
+                            "Do NOT include findings from unrelated AE categories (e.g., suicidality warnings "
+                            "when investigating bruxism) even if they appear in the same FDA label or KB chunk.\n\n"
+                            "### Internal KB / FDA Label Baseline — what the label already documents about the investigated AE "
+                            "or adjacent organ-system findings. Exclude unrelated warnings.\n"
+                            "### Novel Findings — new AE findings not in the label. "
                             "Each bullet cites one finding with [PMID: XXXXXXXX] (auto-converted to [N]). "
                             "Only use PMIDs actually returned by PubMed tools.\n"
-                            "### Known / Expected Findings — bullet list of label-consistent findings to discard.\n"
-                            "### Signal Assessment — bullet list: evidence quality, signal strength, confidence.\n"
+                            "### Known / Expected Findings — label-consistent findings RELATED TO THE INVESTIGATED AE to discard. "
+                            "Exclude unrelated boxed warnings or contraindications.\n"
+                            "### Signal Assessment — evidence quality, signal strength, confidence — scoped to investigated AE only.\n"
                             "Do NOT include article titles or author names."
                         )
                     },
