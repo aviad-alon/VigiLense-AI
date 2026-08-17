@@ -8,8 +8,40 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 
 import json
 import re
+import time
 from config import llm_client, supabase, CHAT_MODEL
 from tools import TOOLS, dispatch
+
+
+# ── LLM Call Retry Helper ──────────────────────────────────────────────────────
+
+def _llm_with_retry(client, max_attempts: int = 3, **kwargs):
+    """
+    Call client.chat.completions.create() with exponential-backoff retry.
+    Retries on transient errors: 429 (rate limit), 5xx (server errors),
+    connection drops, and timeouts. Raises on the last attempt or on
+    non-transient errors (e.g. 400 Bad Request).
+    """
+    delay = 1.0
+    for attempt in range(max_attempts):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            err    = str(exc).lower()
+            transient = (
+                status in (429, 500, 502, 503, 504)
+                or any(t in err for t in (
+                    "connection", "timeout", "rate limit",
+                    "service unavailable", "bad gateway",
+                ))
+            )
+            if transient and attempt < max_attempts - 1:
+                print(f"[LLM transient error — attempt {attempt + 1}/{max_attempts}] {exc}. Retrying in {delay:.0f}s…")
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise
 
 # ── Citation Integrity Helpers ─────────────────────────────────────────────────
 # These run in Python — independent of LLM behaviour — guaranteeing that
@@ -432,12 +464,17 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     for _ in range(MAX_ITERATIONS):
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
-        response = llm_client.chat.completions.create(
-            model       = CHAT_MODEL,
-            messages    = messages,
-            tools       = TOOLS,
-            tool_choice = "auto",
-        )
+        try:
+            response = _llm_with_retry(
+                llm_client,
+                model       = CHAT_MODEL,
+                messages    = messages,
+                tools       = TOOLS,
+                tool_choice = "auto",
+            )
+        except Exception as exc:
+            print(f"[LLM call failed after retries — breaking loop] {exc}")
+            break   # exit gracefully; fallback report is built below
         last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 
@@ -556,7 +593,8 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                 ),
             })
             try:
-                forced = llm_client.chat.completions.create(
+                forced = _llm_with_retry(
+                    llm_client,
                     model       = CHAT_MODEL,
                     messages    = messages,
                     tools       = TOOLS,

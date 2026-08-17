@@ -995,7 +995,12 @@ def _extract_article_summaries(
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(_extract_one, art) for art in articles]
         for future in as_completed(futures):
-            future.result()  # propagate any unexpected exceptions
+            try:
+                future.result()
+            except Exception as exc:
+                # _extract_one already catches its own errors; this guards against
+                # unexpected worker-level failures (e.g. memory error, OS signal).
+                print(f"[Phase 2 extraction worker error] {exc}")
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
@@ -1019,13 +1024,18 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
     }
 
     # Step 1: count only
-    count_resp = requests.get(
-        PUBMED_ESEARCH_URL,
-        params={**base_params, "retmax": 0},
-        timeout=HTTP_TIMEOUT,
-    )
-    count_resp.raise_for_status()
-    total_count = int(count_resp.json().get("esearchresult", {}).get("count", 0))
+    total_count = 0
+    try:
+        count_resp = requests.get(
+            PUBMED_ESEARCH_URL,
+            params={**base_params, "retmax": 0},
+            timeout=HTTP_TIMEOUT,
+        )
+        count_resp.raise_for_status()
+        total_count = int(count_resp.json().get("esearchresult", {}).get("count", 0))
+    except Exception as exc:
+        print(f"[PubMed count step failed — term='{term}'] {exc}")
+        return [], {"date_range": f"{min_year} – present", "total_found": 0, "total_fetched": 0}
 
     audit_info: dict = {
         "date_range":    f"{min_year} – present",
@@ -1038,24 +1048,34 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
 
     # Step 2: fetch top PMIDs by relevance
     fetch_n = min(total_count, max_results)
-    id_resp = requests.get(
-        PUBMED_ESEARCH_URL,
-        params={**base_params, "retmax": fetch_n},
-        timeout=HTTP_TIMEOUT,
-    )
-    id_resp.raise_for_status()
-    id_list = id_resp.json().get("esearchresult", {}).get("idlist", [])
+    id_list: list[str] = []
+    try:
+        id_resp = requests.get(
+            PUBMED_ESEARCH_URL,
+            params={**base_params, "retmax": fetch_n},
+            timeout=HTTP_TIMEOUT,
+        )
+        id_resp.raise_for_status()
+        id_list = id_resp.json().get("esearchresult", {}).get("idlist", [])
+    except Exception as exc:
+        print(f"[PubMed ID-fetch step failed — term='{term}'] {exc}")
+        return [], audit_info
     if not id_list:
         return [], audit_info
 
     # Step 3: efetch full records
-    fetch_resp = requests.get(
-        PUBMED_EFETCH_URL,
-        params={"db": "pubmed", "id": ",".join(id_list), "retmode": "xml", "rettype": "xml"},
-        timeout=PUBMED_FETCH_TIMEOUT,
-    )
-    fetch_resp.raise_for_status()
-    root = ET.fromstring(fetch_resp.content)
+    root = None
+    try:
+        fetch_resp = requests.get(
+            PUBMED_EFETCH_URL,
+            params={"db": "pubmed", "id": ",".join(id_list), "retmode": "xml", "rettype": "xml"},
+            timeout=PUBMED_FETCH_TIMEOUT,
+        )
+        fetch_resp.raise_for_status()
+        root = ET.fromstring(fetch_resp.content)
+    except Exception as exc:
+        print(f"[PubMed efetch step failed — term='{term}'] {exc}")
+        return [], audit_info
 
     articles = []
     for pub in root.findall(".//PubmedArticle"):
