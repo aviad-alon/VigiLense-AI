@@ -806,8 +806,8 @@ def calculate_disproportionality(
 PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
-SCREENING_BATCH_SIZE  = 50   # articles per LLM screening call
-MAX_PUBMED_SCREEN     = 50   # cap on articles fetched when screening is active
+SCREENING_BATCH_SIZE  = 15   # articles per LLM screening call
+MAX_PUBMED_SCREEN     = 15   # cap on articles fetched when screening is active
 
 
 def _screen_articles_llm(
@@ -992,7 +992,7 @@ def _extract_article_summaries(
 
     # Run all per-article extractions in parallel — reduces Phase 2 from
     # N×(latency per call) to ~1×(latency per call) wall-clock time.
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(_extract_one, art) for art in articles]
         for future in as_completed(futures):
             future.result()  # propagate any unexpected exceptions
