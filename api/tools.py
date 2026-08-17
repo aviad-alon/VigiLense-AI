@@ -1020,6 +1020,8 @@ def _extract_article_summaries(
             # Fail gracefully — article remains without pv_tier/pv_summary;
             # agent.py will fall back to the LLM-provided summary at report time.
 
+    MAX_PHASE2_ARTICLES = 6   # cost cap — top-6 is sufficient for a quality report
+    articles = articles[:MAX_PHASE2_ARTICLES]
     _trace("Phase2 _extract_article_summaries START", count=len(articles))
     # Run per-article extractions in parallel — each _extract_one sees only
     # its own article, so cross-contamination is structurally impossible.
