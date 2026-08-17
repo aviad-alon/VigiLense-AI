@@ -874,7 +874,7 @@ def _screen_articles_llm(
             resp = llm_client.chat.completions.create(
                 model=CHAT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0,
+                temperature=1,
             )
             raw = resp.choices[0].message.content.strip()
             if "```" in raw:
@@ -971,7 +971,7 @@ def _extract_article_summaries(
             resp = llm_client.chat.completions.create(
                 model=CHAT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0,
+                temperature=1,
             )
             raw = resp.choices[0].message.content.strip()
             if "```" in raw:
