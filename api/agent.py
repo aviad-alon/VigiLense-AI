@@ -124,9 +124,9 @@ def _build_literature_section(
 
         parts.append("\n\n".join(items))
 
-    # ── Section 2: Collapsible — all screened articles ────────────────────────
-    n_all = len(all_ordered)
-    if n_all > 0:
+    # ── Section 2: Collapsible — background articles only ────────────────────────
+    background_articles = tier2 + no_summary
+    if background_articles:
         def _art_header(art: dict) -> str:
             pmid       = art.get("pmid", "")
             n          = pmid_to_number.get(pmid, "?")
@@ -143,14 +143,7 @@ def _build_literature_section(
 
         collapsible_items: list[str] = []
 
-        # Tier 1 in collapsible — full entry (mirrors main view)
-        for art in tier1:
-            pmid = art.get("pmid", "")
-            collapsible_items.append(
-                _art_header(art) + f"\n   **Key Finding:** {summaries[pmid]}"
-            )
-
-        # Tier 2 in collapsible — 1-line summary note
+        # Tier 2 — 1-line contextual note
         for art in tier2:
             pmid         = art.get("pmid", "")
             summary_note = summaries.get(pmid, "No direct AE data.")
@@ -162,9 +155,11 @@ def _build_literature_section(
         for art in no_summary:
             collapsible_items.append(_art_header(art))
 
+        n_bg = len(background_articles)
         collapsible_block = (
             f"<details>\n"
-            f"<summary>Click to expand all {n_all} screened PubMed articles</summary>\n"
+            f"<summary>📄 Click to expand {n_bg} background article{'s' if n_bg != 1 else ''} "
+            f"(reviews &amp; mechanistic studies — no direct AE reports)</summary>\n"
             "\n"
             + "\n\n".join(collapsible_items)
             + "\n\n</details>"
