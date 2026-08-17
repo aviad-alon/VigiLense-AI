@@ -401,9 +401,27 @@ TOOLS = [
                     "is_significant": {
                         "type": "boolean",
                         "description": (
-                            "True if ROR ≥ 2.0 AND lower CI > 1.0, "
-                            "or if strong qualitative evidence warrants escalation. "
-                            "False otherwise."
+                            "STATISTICAL ONLY — set to true if and only if ROR ≥ 2.0 AND lower 95% CI > 1.0. "
+                            "Set to false if ROR is below threshold or was not calculable. "
+                            "Do NOT factor in literature evidence here — use signal_level for composite assessment."
+                        )
+                    },
+                    "signal_level": {
+                        "type": "string",
+                        "enum": ["none", "potential", "significant"],
+                        "description": (
+                            "COMPOSITE signal classification based on BOTH FAERS and PubMed evidence. "
+                            "This drives the master report header and subject table — set it carefully:\n\n"
+                            "'significant' — FAERS ROR ≥ 2.0 with lower CI > 1.0. "
+                            "The statistical threshold is met and constitutes a confirmed signal.\n\n"
+                            "'potential'   — FAERS is negative or not calculable, BUT Tier 1 literature exists "
+                            "with novel, actionable case reports or clinical findings NOT already fully documented "
+                            "in the FDA label / internal KB for this specific adverse event. "
+                            "Use this whenever literature evidence warrants safety team review — "
+                            "even a single unlabeled case report qualifies.\n\n"
+                            "'none'        — Use ONLY when BOTH: (a) FAERS shows no disproportionality, "
+                            "AND (b) no novel unlabeled Tier 1 literature was found. "
+                            "If any Tier 1 novel finding exists, do NOT use 'none'."
                         )
                     },
                     "summary_findings": {
@@ -1464,22 +1482,52 @@ def generate_pharmacovigilance_report(
     disproportionality_source: str | None = None,
     literature_section: str | None = None,    # Python-injected by agent.py — NOT from LLM
     case_counts: dict | None = None,          # raw 2×2 a/b/c/d values for transparent reporting
+    signal_level: str | None = None,          # composite: "none" | "potential" | "significant"
 ) -> dict:
     """
     Generate a standardized Pharmacovigilance Evaluation Report in Markdown.
     Follows CIOMS/ICH E2D executive report structure.
+
+    signal_level drives the master header and Subject table:
+      "significant" → 🔴  (FAERS ROR threshold met)
+      "potential"   → 🟡  (FAERS negative but novel Tier 1 literature found)
+      "none" / None → 🟢  (both sources show no signal)
+
+    is_significant is used exclusively for the FAERS statistics sub-section.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
 
-    signal_badge = "🔴 SIGNIFICANT SAFETY SIGNAL" if is_significant else "🟢 NO SIGNIFICANT SIGNAL"
+    # ── Composite badge (header + Subject table) ──────────────────────────────
+    _level = (signal_level or "none").strip().lower()
+    if _level == "significant":
+        composite_badge = "🔴 SIGNIFICANT SAFETY SIGNAL"
+    elif _level == "potential":
+        composite_badge = "🟡 POTENTIAL SIGNAL — REQUIRES SAFETY REVIEW"
+    else:
+        composite_badge = "🟢 NO SIGNIFICANT SIGNAL"
+
+    # ── FAERS-specific status row (statistics section only) ───────────────────
+    if is_significant:
+        faers_row_badge = "🔴 Significant — ROR ≥ 2.0 and lower CI > 1.0"
+    elif ror is not None:
+        faers_row_badge = "🟢 Not Significant"
+    else:
+        faers_row_badge = "⬜ Not Calculable — No usable frequency data available"
+
+    # ── Literature signal row (Subject table) ─────────────────────────────────
+    if _level == "potential":
+        lit_badge = "🟡 Actionable case reports identified — potential unlabeled risk"
+    elif _level == "significant":
+        lit_badge = "🔴 Novel findings consistent with or confirming statistical signal"
+    else:
+        lit_badge = "🟢 No novel actionable findings"
 
     if ror is not None:
         ci_str     = f"(95% CI: {ci_95[0]}, {ci_95[1]})" if ci_95 else "(95% CI: N/A)"
-        sig_status = "🔴 Significant — ROR ≥ 2.0 and lower CI > 1.0" if is_significant else "🟢 Not Significant"
 
         table_rows = (
             f"| **Calculated ROR** | {ror} {ci_str} |\n"
-            f"| **Signal Status** | {sig_status} |"
+            f"| **Statistical Signal (FAERS)** | {faers_row_badge} |"
         )
 
         if case_counts:
@@ -1516,14 +1564,17 @@ def generate_pharmacovigilance_report(
     else:
         stats_section = (
             "## Statistical Disproportionality Analysis\n\n"
-            "> ROR not calculated — no explicit 2×2 frequency counts were found in the retrieved "
+            f"| Metric / Parameter | Value / Data |\n"
+            f"| :--- | :--- |\n"
+            f"| **Statistical Signal (FAERS)** | {faers_row_badge} |\n"
+            "\n> ROR not calculated — no explicit 2×2 frequency counts were found in the retrieved "
             "literature, and no usable data was available from OpenFDA FAERS for this drug-event pair.\n"
         )
 
     report_markdown = f"""# VigiLenseAI — Pharmacovigilance Evaluation Report
 
 **Report Date:** {generated_at}
-**Status:** {signal_badge}
+**Status:** {composite_badge}
 
 ---
 
@@ -1533,7 +1584,9 @@ def generate_pharmacovigilance_report(
 |-------|-------|
 | **Drug Under Investigation** | {drug_name} |
 | **Adverse Event** | {adverse_event} |
-| **Signal Classification** | {signal_badge} |
+| **Overall Signal Classification** | {composite_badge} |
+| **Statistical Signal (FAERS)** | {faers_row_badge} |
+| **Literature Signal (PubMed)** | {lit_badge} |
 
 ---
 
@@ -1619,7 +1672,7 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
         return abort_investigation(**_filter(fn_args, {"abort_code", "reason"}))
     if fn_name == "generate_pharmacovigilance_report":
         return generate_pharmacovigilance_report(**_filter(fn_args, {
-            "drug_name", "adverse_event", "is_significant",
+            "drug_name", "adverse_event", "is_significant", "signal_level",
             "summary_findings", "recommendations", "ror", "ci_95",
             "disproportionality_source", "literature_section", "case_counts"
         }))
