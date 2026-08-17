@@ -21,6 +21,7 @@ Tools:
 import json
 import math
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import requests
 import config as _cfg
@@ -1020,9 +1021,13 @@ def _extract_article_summaries(
             # agent.py will fall back to the LLM-provided summary at report time.
 
     _trace("Phase2 _extract_article_summaries START", count=len(articles))
-    # Run per-article extractions sequentially.
-    for art in articles:
-        _extract_one(art)
+    # Run per-article extractions in parallel — each _extract_one sees only
+    # its own article, so cross-contamination is structurally impossible.
+    max_workers = min(len(articles), 6)  # cap at 6 concurrent LLM connections
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_extract_one, art): art for art in articles}
+        for future in as_completed(futures):
+            future.result()  # _extract_one catches its own exceptions; this won't raise
     _trace("Phase2 _extract_article_summaries DONE")
 
 
