@@ -68,12 +68,7 @@ TOOLS = [
             "description": (
                 "Calculate the Reporting Odds Ratio (ROR) and 95% Confidence Interval "
                 "from a 2×2 contingency table. "
-                "IMPORTANT: Only call this tool if you have extracted EXPLICIT numerical "
-                "frequency counts directly from a published article, table, or database result. "
-                "Do NOT estimate, infer, or fabricate any of the four cell counts. "
-                "If the literature does not report exact case counts, skip this tool entirely "
-                "and note in your reasoning that quantitative signal analysis was not possible "
-                "due to missing frequency data."
+                "Only call with EXPLICIT numerical counts from a published source — never estimate or fabricate."
             ),
             "parameters": {
                 "type": "object",
@@ -109,15 +104,9 @@ TOOLS = [
         "function": {
             "name": "fetch_fda_adverse_events",
             "description": (
-                "Fallback Disproportionality Tool — query the OpenFDA FAERS (FDA Adverse Event "
-                "Reporting System) API to dynamically retrieve real-world case counts for a "
-                "drug-event pair and construct a 2×2 contingency table (a, b, c, d). "
-                "WHEN TO CALL: Only invoke this tool if PubMed literature was retrieved but "
-                "contained NO explicit numerical 2×2 frequency counts. "
-                "Do NOT call if you already have explicit counts from literature. "
-                "Do NOT fabricate counts — use only what this tool returns. "
-                "After a successful call, pass the returned a/b/c/d values directly to "
-                "`calculate_disproportionality`, tagging the source as 'OpenFDA FAERS Database'."
+                "Query OpenFDA FAERS to retrieve real-world case counts (a, b, c, d) for a "
+                "drug-event pair. Call ONLY when PubMed literature has no explicit 2×2 counts. "
+                "Pass returned values directly to `calculate_disproportionality`."
             ),
             "parameters": {
                 "type": "object",
@@ -159,16 +148,10 @@ TOOLS = [
                     "query_term": {
                         "type": "string",
                         "description": (
-                            "PubMed boolean search query — MUST use strict boolean grouping with parentheses. "
-                            "Format: '\"drug_name\" AND (\"adverse_event_1\" OR \"adverse_event_2\" OR \"adverse_event_3\")'. "
-                            "Multi-word terms MUST be double-quoted. "
-                            "Good examples: "
-                            "'\"sildenafil\" AND (\"myocardial infarction\" OR \"arrhythmia\" OR \"sudden cardiac death\")', "
-                            "'\"sertraline\" AND (\"QTc prolongation\" OR \"cardiac arrhythmia\" OR \"torsades de pointes\")', "
-                            "'\"warfarin\" AND (\"bleeding\" OR \"hemorrhage\" OR \"thrombocytopenia\")'. "
-                            "BAD (never do this): 'sildenafil cardiovascular effects OR myocardial infarction OR stroke' — "
-                            "without parentheses PubMed treats OR as global and returns 400K+ unrelated results. "
-                            "ALWAYS include the drug name AND group adverse events with (... OR ...)."
+                            "PubMed boolean query — strict grouped syntax required. "
+                            "Format: '\"drug_name\" AND (\"ae1\" OR \"ae2\")'. "
+                            "Multi-word terms MUST be double-quoted. Drug name MUST be included. "
+                            "Without parentheses, PubMed applies OR globally → 400K+ unrelated results."
                         )
                     },
                     "max_results": {
@@ -184,11 +167,8 @@ TOOLS = [
                     "investigation_context": {
                         "type": "string",
                         "description": (
-                            "Full investigation context passed to the LLM screener: include the drug name, "
-                            "active ingredients, adverse event, and any demographic context from the user query "
-                            "(e.g. 'Sertraline (sertraline hydrochloride, SSRI) — bruxism signal in adolescents'). "
-                            "When provided, ALL matching articles are fetched and LLM-screened for relevance "
-                            "before returning results. ALWAYS provide this parameter."
+                            "Drug name, active ingredients, AE, and demographic context for the LLM screener "
+                            "(e.g. 'Sertraline (sertraline HCl, SSRI) — bruxism in adolescents'). ALWAYS provide."
                         )
                     }
                 },
@@ -274,17 +254,9 @@ TOOLS = [
         "function": {
             "name": "query_knowledge_base",
             "description": (
-                "Search the company's internal vector database (Pinecone) holding official "
-                "FDA drug labels and safety documents. "
-                "Use this to check whether a SPECIFIC adverse event or finding is already "
-                "documented in the known safety profile. "
-                "IMPORTANT: Call this tool MULTIPLE TIMES throughout the investigation — "
-                "once for each specific adverse event or signal you discover in PubMed literature. "
-                "Do NOT call it once with a generic query and assume you have the full picture. "
-                "Example workflow: you find 'hepatotoxicity' in a PubMed abstract → call "
-                "query_knowledge_base('Warfarin', 'hepatotoxicity') to check if it is already "
-                "documented. If no relevant chunks are returned, this may be a novel signal. "
-                "If it IS documented, it is not novel — discard it and move on."
+                "Search the internal Pinecone vector DB (FDA drug labels and safety documents) "
+                "to check whether a specific AE is already documented. "
+                "Call once per distinct finding discovered in literature — not just once globally."
             ),
             "parameters": {
                 "type": "object",
