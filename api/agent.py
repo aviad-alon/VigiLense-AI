@@ -542,22 +542,71 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
         if final_report:
             break
 
-    # Fallback if agent never called submit_final_report or abort_investigation
+    # Fallback: agent exhausted iterations without calling submit_final_report.
+    # Force one final LLM call instructing it to generate a proper report immediately.
     if not final_report:
-        last_text = (
-            last_choice.message.content
-            if last_choice and last_choice.message.content
-            else "Agent completed without a final report."
-        )
-        final_report = {
-            "confidence_score":      0,
-            "evidence_chain":        [s["module"] for s in steps],
-            "signal_level":          "no signal",
-            "novel_signal_detected": False,
-            "severe_events_found":   [],
-            "reasoning":             last_text,
-            "recommended_action":    "Discard - No Novel Signal",
-        }
+        if not report_markdown and llm_client:
+            messages.append({
+                "role":    "user",
+                "content": (
+                    "You have reached the iteration limit. "
+                    "You MUST now call `generate_pharmacovigilance_report` followed immediately "
+                    "by `submit_final_report` using all the evidence you have gathered so far. "
+                    "Do not call any other tools. Generate the report now."
+                ),
+            })
+            try:
+                forced = llm_client.chat.completions.create(
+                    model       = CHAT_MODEL,
+                    messages    = messages,
+                    tools       = TOOLS,
+                    tool_choice = "auto",
+                )
+                forced_choice = forced.choices[0]
+                for tool_call in (forced_choice.message.tool_calls or []):
+                    fn_name = tool_call.function.name
+                    fn_args = json.loads(tool_call.function.arguments)
+                    if fn_name == "generate_pharmacovigilance_report":
+                        summaries_dict = {**{
+                            s["pmid"]: s["relevance_summary"]
+                            for s in (fn_args.get("article_summaries") or [])
+                            if isinstance(s, dict) and s.get("pmid") in valid_pmids and s.get("relevance_summary")
+                        }, **precomputed_summaries}
+                        tiers_dict = {**{
+                            s["pmid"]: s.get("tier", "1")
+                            for s in (fn_args.get("article_summaries") or [])
+                            if isinstance(s, dict) and s.get("pmid") in valid_pmids
+                        }, **precomputed_tiers}
+                        lit_section, pmid_to_number = _build_literature_section(
+                            collected_articles, summaries_dict, pubmed_audit_entries, tiers_dict
+                        )
+                        fn_args["literature_section"] = lit_section
+                        if "summary_findings" in fn_args:
+                            fn_args["summary_findings"] = _replace_pmid_citations(
+                                fn_args["summary_findings"], pmid_to_number, valid_pmids
+                            )
+                    try:
+                        result = dispatch(fn_name, fn_args)
+                    except Exception as exc:
+                        result = {"error": str(exc)}
+                    if fn_name == "generate_pharmacovigilance_report":
+                        report_markdown = result.get("report_markdown")
+                    if fn_name == "submit_final_report":
+                        final_report = fn_args
+                        steps.append({"module": fn_name, "prompt": fn_args, "response": fn_args})
+            except Exception:
+                pass
+
+        if not final_report:
+            final_report = {
+                "confidence_score":      0,
+                "evidence_chain":        [s["module"] for s in steps],
+                "signal_level":          "no signal",
+                "novel_signal_detected": False,
+                "severe_events_found":   [],
+                "reasoning":             "Agent reached iteration limit.",
+                "recommended_action":    "Discard - No Novel Signal",
+            }
 
     # Attach the markdown report to final_report so index.py can expose it
     if report_markdown:
