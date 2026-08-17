@@ -21,6 +21,7 @@ Tools:
 import json
 import math
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import requests
 from config import llm_client, pc, supabase, EMBED_MODEL, PINECONE_INDEX, CHAT_MODEL
@@ -918,10 +919,10 @@ def _extract_article_summaries(
     if not articles or not llm_client:
         return
 
-    for art in articles:
+    def _extract_one(art: dict) -> None:
         pmid     = art.get("pmid", "")
         title    = art.get("title", "Unknown title")
-        abstract = (art.get("abstract") or "")[:2000]  # full abstract, capped at 2 k chars
+        abstract = (art.get("abstract") or "")[:2000]
 
         prompt = (
             "You are a Pharmacovigilance Literature Analyst.\n\n"
@@ -988,6 +989,13 @@ def _extract_article_summaries(
             print(f"[Article summary extraction error — PMID {pmid}] {exc}")
             # Fail gracefully — article remains without pv_tier/pv_summary;
             # agent.py will fall back to the LLM-provided summary at report time.
+
+    # Run all per-article extractions in parallel — reduces Phase 2 from
+    # N×(latency per call) to ~1×(latency per call) wall-clock time.
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(_extract_one, art) for art in articles]
+        for future in as_completed(futures):
+            future.result()  # propagate any unexpected exceptions
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
