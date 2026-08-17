@@ -427,7 +427,7 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
     precomputed_tiers: dict[str, str] = {}       # pmid → pv_tier
     last_choice = None
-    MAX_ITERATIONS = 20         # allows full investigation + report + submit
+    MAX_ITERATIONS = 15         # allows full investigation + report + submit
 
     for _ in range(MAX_ITERATIONS):
 
