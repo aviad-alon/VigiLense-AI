@@ -473,15 +473,22 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
     precomputed_tiers: dict[str, str] = {}       # pmid → pv_tier
     last_choice = None
-    MAX_ITERATIONS = 15         # allows full investigation + report + submit
+    MAX_ITERATIONS    = 15    # allows full investigation + report + submit
+    WALL_CLOCK_BUDGET = 240   # seconds — bail out before Vercel's 300 s hard limit
 
     # Reset trace log for this run
     _cfg.trace_log.clear()
+    start_time = time.time()
     _trace("run_react_loop START", prompt_len=len(user_prompt))
 
     for iteration in range(MAX_ITERATIONS):
 
-        _trace(f"ITER {iteration + 1}/{MAX_ITERATIONS}", msg_count=len(messages))
+        elapsed = time.time() - start_time
+        if elapsed > WALL_CLOCK_BUDGET:
+            _trace("WALL_CLOCK_BUDGET exceeded — breaking loop early", elapsed_s=round(elapsed, 1))
+            break
+
+        _trace(f"ITER {iteration + 1}/{MAX_ITERATIONS}", msg_count=len(messages), elapsed_s=round(elapsed, 1))
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
         _trace(f"ITER {iteration + 1} LLM call START")
@@ -619,9 +626,11 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
 
     # Fallback: agent exhausted iterations without calling submit_final_report.
     # Force one final LLM call instructing it to generate a proper report immediately.
+    # Skip the forced LLM call if the wall-clock budget was already exceeded.
+    budget_remaining = WALL_CLOCK_BUDGET - (time.time() - start_time)
     if not final_report:
-        _trace("FALLBACK: loop ended without final_report", steps_so_far=len(steps))
-        if not report_markdown and llm_client:
+        _trace("FALLBACK: loop ended without final_report", steps_so_far=len(steps), budget_remaining_s=round(budget_remaining, 1))
+        if not report_markdown and llm_client and budget_remaining > 30:
             messages.append({
                 "role":    "user",
                 "content": (

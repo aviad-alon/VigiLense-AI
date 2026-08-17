@@ -34,6 +34,7 @@ if _api_key:
     llm_client = OpenAI(
         api_key  = _api_key,
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.llmod.ai"),
+        timeout  = 90.0,   # max 90 s per LLM call — prevents silent hangs
     )
 
 # ── Pinecone client ───────────────────────────────────────────────────────────
