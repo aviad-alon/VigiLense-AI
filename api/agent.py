@@ -386,11 +386,13 @@ TRIGGER: `query_knowledge_base` returns drug_in_formulary=false. This is always 
 ACTION: abort_code = "drug_not_in_portfolio"
 REASON template (SHORT — 1-2 sentences only): '[drug_name]' is not in the organization's pharmacovigilance portfolio according to the internal knowledge base. This system only performs signal detection for drugs held in the company's portfolio.
 
-─── CASE 7: no_adverse_event_specified ───
-TRIGGER: The prompt names a valid drug but contains no specific adverse event or safety concern to investigate. Examples that trigger this case: "general adverse event profile for Warfarin", "tell me about Metformin side effects", "Warfarin safety overview", "what are the risks of Sertraline".
-DO NOT TRIGGER if: the prompt contains any specific AE term (e.g. "bleeding", "hepatotoxicity", "neuropathy", "rash", "QTc prolongation", "bruxism", "infection", "malignancy", "lactic acidosis"). Even a broad category like "cardiovascular risk" or "serious infections" is sufficient — do NOT abort in that case.
-ACTION: abort_code = "no_adverse_event_specified". Call abort_investigation WITHOUT calling any other tool first.
-REASON template: "The query does not specify an adverse event to investigate for '[drug_name]'. This system is designed to detect signals for a specific adverse event. Please re-submit with a target adverse event — for example: 'Investigate bleeding risk for Warfarin' or 'Are there novel hepatotoxicity signals for Warfarin?'." """
+GENERAL QUERY HANDLING — when no specific adverse event is mentioned:
+If the user's prompt names a drug but does not specify a particular AE (e.g. "general adverse event profile for Warfarin", "Warfarin safety overview", "what are the risks of Metformin"), do NOT abort. Instead, run a focused signal discovery investigation:
+1. Call `query_knowledge_base` (mandatory first step) to understand the drug's existing risk profile and pharmacological class.
+2. Based on the drug class and mechanism, identify 2–3 AE categories most likely to yield novel signals (e.g. for anticoagulants: bleeding, thrombocytopenia, drug interactions; for SSRIs: cardiac arrhythmia, movement disorders, hepatotoxicity).
+3. Run ONE focused `fetch_pubmed_advanced` call per AE category — use tight boolean syntax: "[drug_name]" AND ("[ae1]" OR "[ae2]"). Do NOT run a single massive broad query.
+4. Review results, select the AE with the strongest novel signal (most Tier 1 evidence not already in the FDA label) and build the full report around that single AE.
+5. In the Signal Assessment section, briefly note this was a discovery scan and state which AE category was selected as the primary signal."""
 
 
 # ── ReAct Loop ────────────────────────────────────────────────────────────────
