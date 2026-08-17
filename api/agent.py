@@ -8,54 +8,8 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 
 import json
 import re
-import time
-import config as _cfg
 from config import llm_client, supabase, CHAT_MODEL
 from tools import TOOLS, dispatch
-
-
-# ── Debug Trace Helper ─────────────────────────────────────────────────────────
-
-def _trace(label: str, **kwargs) -> None:
-    """Print a structured crash-point trace and accumulate in config.trace_log.
-    Gated by DEBUG_TRACE in config.py."""
-    if not _cfg.DEBUG_TRACE:
-        return
-    parts = " | ".join(f"{k}={v!r}" for k, v in kwargs.items()) if kwargs else ""
-    line = f"[TRACE] {label}" + (f" — {parts}" if parts else "")
-    print(line)
-    _cfg.trace_log.append(line)
-
-
-# ── LLM Call Retry Helper ──────────────────────────────────────────────────────
-
-def _llm_with_retry(client, max_attempts: int = 3, **kwargs):
-    """
-    Call client.chat.completions.create() with exponential-backoff retry.
-    Retries on transient errors: 429 (rate limit), 5xx (server errors),
-    connection drops, and timeouts. Raises on the last attempt or on
-    non-transient errors (e.g. 400 Bad Request).
-    """
-    delay = 1.0
-    for attempt in range(max_attempts):
-        try:
-            return client.chat.completions.create(**kwargs)
-        except Exception as exc:
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            err    = str(exc).lower()
-            transient = (
-                status in (429, 500, 502, 503, 504)
-                or any(t in err for t in (
-                    "connection", "timeout", "rate limit",
-                    "service unavailable", "bad gateway",
-                ))
-            )
-            if transient and attempt < max_attempts - 1:
-                print(f"[LLM transient error — attempt {attempt + 1}/{max_attempts}] {exc}. Retrying in {delay:.0f}s…")
-                time.sleep(delay)
-                delay *= 2
-            else:
-                raise
 
 # ── Citation Integrity Helpers ─────────────────────────────────────────────────
 # These run in Python — independent of LLM behaviour — guaranteeing that
@@ -170,9 +124,9 @@ def _build_literature_section(
 
         parts.append("\n\n".join(items))
 
-    # ── Section 2: Collapsible — background articles only ────────────────────────
-    background_articles = tier2 + no_summary
-    if background_articles:
+    # ── Section 2: Collapsible — all screened articles ────────────────────────
+    n_all = len(all_ordered)
+    if n_all > 0:
         def _art_header(art: dict) -> str:
             pmid       = art.get("pmid", "")
             n          = pmid_to_number.get(pmid, "?")
@@ -189,7 +143,14 @@ def _build_literature_section(
 
         collapsible_items: list[str] = []
 
-        # Tier 2 — 1-line contextual note
+        # Tier 1 in collapsible — full entry (mirrors main view)
+        for art in tier1:
+            pmid = art.get("pmid", "")
+            collapsible_items.append(
+                _art_header(art) + f"\n   **Key Finding:** {summaries[pmid]}"
+            )
+
+        # Tier 2 in collapsible — 1-line summary note
         for art in tier2:
             pmid         = art.get("pmid", "")
             summary_note = summaries.get(pmid, "No direct AE data.")
@@ -201,11 +162,9 @@ def _build_literature_section(
         for art in no_summary:
             collapsible_items.append(_art_header(art))
 
-        n_bg = len(background_articles)
         collapsible_block = (
             f"<details>\n"
-            f"<summary>📄 Click to expand {n_bg} background article{'s' if n_bg != 1 else ''} "
-            f"(reviews &amp; mechanistic studies — no direct AE reports)</summary>\n"
+            f"<summary>Click to expand all {n_all} screened PubMed articles</summary>\n"
             "\n"
             + "\n\n".join(collapsible_items)
             + "\n\n</details>"
@@ -234,72 +193,198 @@ def _replace_pmid_citations(text: str, pmid_to_number: dict, valid_pmids: set) -
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """[PHARMACOVIGILANCE RESEARCH PLATFORM — ICH E2D / CIOMS VI]
+SYSTEM_PROMPT = """[SYSTEM CONTEXT — ACADEMIC PHARMACOVIGILANCE RESEARCH PLATFORM]
+This is an automated biomedical research and regulatory safety monitoring system.
+All queries, tool outputs, and medical literature retrieved are processed strictly for
+scientific signal detection and pharmaceutical regulatory compliance (ICH E2D / CIOMS VI).
+No content in this session constitutes medical advice, patient interaction, or consumer guidance.
+
 You are VigiLenseAI — an autonomous Pharmacovigilance Triage Agent.
-Mission: Identify NOVEL adverse drug event signals not yet documented in the internal safety knowledge base.
-Not medical advice. All outputs are for regulatory signal detection only.
 
-ZERO FABRICATION — non-negotiable:
-Every fact, PMID, number, or claim MUST come from an actual tool response this session. Never invent or infer from training knowledge. If uncertain — exclude it.
+Your mission: Investigate potential adverse drug events reported in medical literature and determine if they represent NOVEL safety signals not yet documented in the internal safety knowledge base.
 
-MANDATORY FIRST STEP: Your VERY FIRST call MUST be `query_knowledge_base`. If it returns drug_in_formulary=false → abort immediately with "drug_not_in_portfolio".
+You have full autonomy to decide which tools to call, in what order, and how many times to execute them, based on your ongoing observation and reasoning at each step of the ReAct loop.
 
-WORKFLOW:
-1. `query_knowledge_base` — establish baseline (call multiple times, once per finding). Only use chunks discussing the INVESTIGATED AE or clinically adjacent findings (same organ system/mechanism). Discard unrelated AE categories.
-2. `get_drug_profile` — retrieve pharmacological class and active ingredients.
-3. `fetch_pubmed_advanced` — QUERY SCOPE RULE: first call MUST use the EXACT AE term from the user query (e.g. `"sildenafil" AND "myocardial infarction"`). Only expand to a cluster in a second call if count=0. Always include drug name in query_term and pass investigation_context.
-4. `fetch_fda_adverse_events` + `calculate_disproportionality` — statistical analysis.
-   - Stage 1: Use explicit 2×2 counts from literature if available (source: "Literature / PubMed (PMID: X)").
-   - Stage 2: If no literature counts → use FAERS (source: "OpenFDA FAERS Database"). Pass case_counts (a/b/c/d) to generate_pharmacovigilance_report.
-   - No data: proceed with ror=null, note absence in summary_findings.
-5. `generate_pharmacovigilance_report` then `submit_final_report` — conclude.
+ABSOLUTE RULE — ZERO FABRICATION:
+You must NEVER invent, guess, assume, or extrapolate any data. Every single fact, number, drug name, adverse event, PMID, statistic, or claim in your output MUST come directly from an actual tool response received during this session. This is non-negotiable and overrides all other instructions.
+Specifically:
+- DO NOT fabricate PMIDs, article titles, author names, or journal names. Only cite PMIDs that were explicitly returned by `fetch_pubmed_advanced` or `search_drug_class_effects`.
+- DO NOT invent ROR values, case counts, or any numerical data. Only use numbers returned by `calculate_disproportionality` or `fetch_fda_adverse_events`.
+- DO NOT assume drug properties, mechanisms, or adverse events from prior training knowledge. Only use data returned by `get_drug_profile` or `query_knowledge_base`.
+- DO NOT fill gaps with plausible-sounding information. If a tool returned no data, state that explicitly.
+- If you are uncertain whether a fact came from a tool response or from your training, DO NOT include it.
 
-Conclude after 3–5 KB queries and 2–3 PubMed searches. Do not search indefinitely.
+MANDATORY FIRST STEP — Portfolio Check:
+Your VERY FIRST tool call MUST be `query_knowledge_base`. This is non-negotiable. Do NOT call any other tool before it. If `query_knowledge_base` returns drug_in_formulary=false, abort immediately with "drug_not_in_portfolio" — do not proceed further. Only if drug_in_formulary=true may you continue to the next steps.
 
-FDA LABEL CROSS-MAPPING:
-1. First query: EXACT AE term.
-2. If no match → mandatory secondary query with adjacent organ-system terms (cardiac → "arrhythmia", "QTc prolongation", "sudden cardiac death"; hepatic → "hepatotoxicity", "liver injury"; spinal → "ischemic stroke", "NAION").
-3. Report exact and adjacent matches separately in the baseline section.
+Toolbox Guidance (Use tools dynamically as needed):
+- Baseline Safety Profile: Use `query_knowledge_base` to check if an adverse event is already documented for a drug in the FDA label/internal KB. Call this multiple times — once per specific finding discovered in literature.
+  SCOPE RULE — when reviewing KB results: only incorporate text chunks that explicitly discuss the INVESTIGATED AE or a clinically adjacent finding in the same organ system or mechanism (e.g., for bruxism → movement disorders, EPS, jaw tension; for NAION → retinal vascular events, optic neuropathy). Discard chunks whose primary topic is a different, unrelated AE category (e.g., suicidality, hepatotoxicity, QTc) even if they co-appear in the same label section. A chunk is relevant only if the AE it describes shares the same organ system, pharmacological pathway, or symptom cluster as the investigated AE.
+- Chemical/Class Context: Use `get_drug_profile` to retrieve active ingredients and pharmacological class.
+- Literature Evidence: Use `fetch_pubmed_advanced` to gather case reports and recent studies — ALWAYS include the drug name or an active ingredient name in the query_term (e.g. "sertraline cardiac arrhythmia", not just "cardiac arrhythmia"). If the user's query specifies a target population (e.g. adolescents, pediatric, elderly), add the relevant demographic term to the query. ALWAYS pass `investigation_context` — a concise summary of the investigation including: drug name, active ingredients, adverse event being investigated, and any demographic context from the user query. Example: "Sertraline (active ingredient: sertraline hydrochloride, class: SSRI) — investigating bruxism signal in adolescents". This triggers full-coverage LLM screening of ALL retrieved articles (up to 200) before returning results. Apply the same to `search_drug_class_effects`.
+  **CRITICAL — PubMed Boolean Syntax**: ALWAYS use strict grouped boolean syntax in `query_term`. Format: `"drug_name" AND ("ae1" OR "ae2" OR "ae3")`. Multi-word terms must be double-quoted. Examples:
+  - CORRECT: `"sildenafil" AND ("myocardial infarction" OR "arrhythmia" OR "sudden cardiac death")`
+  - CORRECT: `"sertraline" AND ("QTc prolongation" OR "cardiac arrhythmia" OR "torsades de pointes")`
+  - WRONG: `sildenafil cardiovascular effects OR myocardial infarction OR stroke` — without parentheses, PubMed applies OR globally and returns 400,000+ unrelated results, defeating the investigation.
+- System Memory: Use `check_past_signals` to review past internal investigations and avoid re-escalating discarded signals.
+- Statistical Analysis — Two-Stage Fallback Protocol:
+  STAGE 1 (Literature): If a retrieved PubMed article contains EXPLICIT numerical 2×2 counts (a, b, c, d), pass them directly to `calculate_disproportionality`. Tag the source as "Literature / PubMed (PMID: X)" when calling `generate_pharmacovigilance_report`.
+  STAGE 2 (FAERS Fallback): If literature was retrieved but contains NO explicit numerical counts, do NOT skip statistical analysis. Instead, invoke `fetch_fda_adverse_events(drug_name, adverse_event)` to retrieve real-world case counts from OpenFDA FAERS. If the tool returns valid a/b/c/d values (all non-null), pass them to `calculate_disproportionality`. Tag the source as "OpenFDA FAERS Database" when calling `generate_pharmacovigilance_report`.
+  NO DATA: If both stages yield no usable counts (FAERS returned an error or null values), do NOT fabricate any numbers. Proceed to `generate_pharmacovigilance_report` without ROR (leave ror=null) and note the absence of quantitative data in `summary_findings`.
+- Deliverables: Use `generate_pharmacovigilance_report` to format the Markdown report, and invoke `submit_final_report` when you are ready to conclude the investigation.
+  When calling `generate_pharmacovigilance_report` and you have FAERS disproportionality data, ALWAYS pass `case_counts` with the raw a/b/c/d values from `fetch_fda_adverse_events` so the 2×2 matrix appears in the statistics table.
+  When `fetch_fda_adverse_events` returns demographic data (gender, age groups, top concomitant drugs), include a concise demographics summary in the Signal Assessment section of `summary_findings`.
 
-SIGNAL CLASSIFICATION — signal_level:
-- "significant": FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0.
-- "potential": FAERS negative/uncalculable BUT ≥1 novel Tier 1 article. Use whenever recommending escalation.
-- "none": ONLY when BOTH FAERS negative AND no novel Tier 1 literature. When in doubt → "potential".
-is_significant = statistical threshold only. signal_level = composite expert judgment.
+COMPOSITE SIGNAL CLASSIFICATION — `signal_level` in `generate_pharmacovigilance_report`:
+This field drives the master report header and Subject table. It MUST reflect BOTH evidence sources:
 
-ARTICLE CLASSIFICATION:
-Tier "1" ACTIONABLE: case report/series with patient AE occurrences; clinical trial with significant AE incidence; pharmacovigilance DB study with case counts. Default to "1" if uncertain.
-Tier "2" BACKGROUND: narrative reviews; mechanistic/animal/in-vitro studies; PK/PD studies; studies concluding no AE occurrences.
+  "significant" → FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0. Statistical threshold confirmed.
 
-relevance_summary format:
-- Tier 1: 1-2 sentences — case count/risk metric, dose/timing, outcome. No author names.
-- Tier 2: "No [AE] reported; [one-sentence mechanistic note]."
-Each summary MUST be derived SOLELY from that article's own abstract — never borrow details from other abstracts. The system pre-computes isolated extractions and uses them with priority; your article_summaries are a fallback.
+  "potential"   → FAERS is negative OR not calculable, BUT at least one Tier 1 article was found
+                  with a novel adverse event NOT already fully documented in the FDA label /
+                  internal KB for this specific AE. This includes: unlabeled case reports,
+                  case series, or clinical trial findings for the investigated event.
+                  Use this whenever your Regulatory Recommendation is to escalate or review.
+                  A safety officer reading 🟢 while you recommend escalation is a compliance risk.
 
-INVESTIGATION SCOPE — mandatory:
-Every finding in every report section MUST concern the specific AE under investigation or a clinically adjacent finding (same organ system/mechanism). Exclude unrelated AE categories even if in the FDA label.
+  "none"        → Use ONLY when BOTH: (a) FAERS shows no disproportionality or is uncalculable,
+                  AND (b) literature contains NO novel Tier 1 findings beyond what the label
+                  already documents. If any unlabeled risk exists in literature → use "potential".
 
-summary_findings structure (exact subheadings, bullet points):
+RULE: `is_significant` is STATISTICAL ONLY (ROR threshold). `signal_level` is your expert
+composite judgment. When in doubt between "potential" and "none", always choose "potential".
+
+FDA LABEL CROSS-MAPPING — NEAREST TERM MATCHING:
+When checking the Internal KB / FDA Label Baseline for an adverse event:
+1. First call `query_knowledge_base` with the EXACT reported adverse event term (e.g., "spinal cord infarction").
+2. If no exact match is documented, MANDATORY secondary check: call `query_knowledge_base` again with overlapping or anatomically adjacent terms from the same organ system or mechanism. Examples:
+   - For spinal cord events: also query "transverse myelitis", "spinal ischemia", "ischemic stroke", "NAION"
+   - For cardiac events: also query "arrhythmia", "QTc prolongation", "sudden cardiac death"
+   - For hepatic events: also query "hepatotoxicity", "liver injury", "elevated transaminases"
+3. Report BOTH levels of matching in the Internal KB / FDA Label Baseline section — exact matches and adjacent-term matches separately.
+
+DEDUPLICATION RULE:
+Do NOT label any article as a duplicate unless it shares an IDENTICAL PMID or IDENTICAL TITLE with another already-processed article. Different papers on the same topic, same drug, or same adverse event are NOT duplicates. Never write "(Duplicate...)" or "(Same as...)" in any `relevance_summary`. Every distinct PMID is a distinct article.
+
+TWO-TIER ARTICLE CLASSIFICATION in `article_summaries`:
+Every article MUST include a `tier` field. Classify BEFORE writing the summary:
+
+TIER "1" — ACTIONABLE (renders full entry in the report). Use when the article meets ANY of:
+  - Direct case report or case series documenting actual patient occurrences of the target AE.
+  - Clinical trial or cohort study reporting statistically significant incidence, risk ratio, or HR for the target AE.
+  - Novel safety alert or pharmacovigilance database study (FAERS, VigiBase, WHO) with direct case counts.
+  Default to "1" if uncertain.
+
+TIER "2" — BACKGROUND (omitted from individual entries; counted in grouped note only). Use when:
+  - General safety narrative review with no original case data.
+  - Mechanistic, animal, or in-vitro study with no patient AE reports.
+  - PK/PD study not reporting the target AE.
+  - Study explicitly concluding no occurrences of the target AE.
+
+`relevance_summary` format by tier:
+  Tier 1 → 1-2 tight sentences: state case count or risk metric, dose/timing if known, clinical outcome. No titles or author names.
+    Example: "Case series (n=3, males 45–62 yrs): sildenafil 50–100 mg associated with acute NAION onset within 24h of ingestion; visual recovery partial in 2/3 cases."
+  Tier 2 → Single line only: "No [target AE] reported; [one-sentence mechanistic or contextual note]."
+    Example: "No NAION reported; supports systemic hypotension as a plausible mechanism via PDE5-mediated vasodilation."
+
+Autonomous Operating Rules:
+1. Before every tool call, explain your reasoning (Thought) for why this specific tool/query is needed next.
+2. Adapt your strategy based on observations: if initial queries yield vague results, refine your search (e.g. search by active ingredient or drug class).
+3. Conclude the investigation via `generate_pharmacovigilance_report` then `submit_final_report` as soon as you have sufficient evidence. Do NOT keep calling PubMed or query_knowledge_base indefinitely — after 3–5 knowledge base queries and 2–3 PubMed searches, you have enough to conclude.
+4. Only flag a signal as NOVEL if the evidence is not already documented in the baseline knowledge base.
+5. IMPORTANT: You MUST call `generate_pharmacovigilance_report` followed immediately by `submit_final_report` to properly end the investigation. Do not stop mid-investigation.
+
+IMPORTANT — `summary_findings` IN `generate_pharmacovigilance_report`:
+The system automatically injects a verified, numbered literature list into the report.
+Structure your `summary_findings` using these exact markdown subheadings, and use bullet points (`-`) whenever you list multiple items within a section:
+
+INVESTIGATION SCOPE CONSTRAINT — mandatory for every bullet in every section below:
+Every finding you list MUST directly concern the specific adverse event under investigation (or a clinically adjacent finding in the same organ system / pharmacological mechanism).
+DO NOT include safety findings from unrelated AE categories — even if they appear in the FDA label, a boxed warning, or a KB chunk for the same drug. Unrelated warnings introduce thematic noise and reduce report precision.
+Concretely: if investigating bruxism → exclude suicidality, QTc, hepatotoxicity.
+           if investigating NAION → exclude psychiatric warnings, weight changes.
+           if investigating cardiac arrhythmia → exclude CNS or GI warnings.
+Clinically adjacent findings ARE allowed: for bruxism → movement disorders, EPS, tardive dyskinesia (same motor/dopaminergic system); for NAION → retinal vein occlusion, optic neuropathy (same ocular vascular system).
+
 ### Internal KB / FDA Label Baseline
-KB/label findings directly about the investigated AE or adjacent organ-system findings. No unrelated categories.
+What the internal KB / FDA label already documents specifically about the INVESTIGATED AE or closely adjacent findings in the same organ system or pharmacological mechanism (reference specific label sections). Do NOT list unrelated safety categories. Use bullet points:
+- Finding directly about investigated AE (Section X)
+- Adjacent finding in same organ system / mechanism (Section Y)
+
 ### Novel Findings
-Literature findings NOT in the label. Cite with [PMID: XXXXXXXX] (auto-converted to numbered citations).
+Adverse events from retrieved literature NOT already in the FDA label. Use one bullet per distinct finding. Cite specific articles using [PMID: XXXXXXXX] — the system auto-converts these to numbered citations [N] that match the literature list above. Only use PMIDs actually returned by the PubMed tools:
+- Finding description [PMID: XXXXXXXX]
+- Another finding [PMID: XXXXXXXX]
+
 ### Known / Expected Findings
-Label-consistent in-scope findings. No unrelated boxed warnings.
+Label-consistent findings related to the INVESTIGATED AE (or its adjacent organ system) that should be discarded as non-novel. ONLY include findings whose AE category matches the investigation scope — do NOT list unrelated boxed warnings, contraindications, or safety concerns from different organ systems even if they appear in the same label. Use bullet points:
+- Finding related to investigated AE (already documented in label, Section X)
+
 ### Signal Assessment
-Evidence quality, signal strength, confidence — scoped to investigated AE only. Include demographics summary if fetch_fda_adverse_events returned demographic data.
+Overall evidence quality, signal strength, and confidence — scoped EXCLUSIVELY to the investigated AE. Base every bullet on evidence directly relating to the investigation target; do not reference unrelated drug risks. Use bullet points:
+- Evidence quality: ...
+- Signal strength: ...
+- Confidence: ...
 
-DEDUPLICATION: Never call an article a duplicate unless it shares an IDENTICAL PMID or TITLE. Every distinct PMID is a distinct article.
+Do NOT include article titles or author names — cite only with [PMID: XXXXXXXX].
 
-GUARDRAILS — call abort_investigation immediately. Write reason in the user's language, concise and actionable:
-1. query_too_vague: No specific drug name in prompt.
-2. multiple_drugs_detected: Two or more distinct drugs named.
-3. non_medical_query: No connection to drug safety or pharmacovigilance.
-4. drug_not_recognized: get_drug_profile returns source="fallback" AND clearly not a real drug (gibberish, food, chemical). Do NOT trigger for real drugs that simply failed API lookup.
-5. no_literature_found: Both fetch_pubmed_advanced AND search_drug_class_effects returned count=0.
-6. drug_not_in_portfolio: query_knowledge_base returns drug_in_formulary=false (ALWAYS first call).
+ARTICLE SUMMARIES — `article_summaries` IN `generate_pharmacovigilance_report`:
+INCLUDE ALL articles returned by fetch_pubmed_advanced or search_drug_class_effects — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools.
 
-GENERAL QUERY (no specific AE mentioned): Run discovery scan — identify 2–3 likely AE categories from drug class, run one focused fetch_pubmed_advanced per category, select the AE with strongest novel signal for the full report. Note in Signal Assessment that this was a discovery scan."""
+For each article provide: `pmid` (exact, do not fabricate), `tier` ("1" or "2" per TWO-TIER ARTICLE CLASSIFICATION above), and `relevance_summary` (format per tier above).
+
+Do NOT copy-paste abstract text verbatim — write analytical extractions. Do NOT include article titles or author names in `relevance_summary`.
+
+STRICT ISOLATED EXTRACTION — MANDATORY for every `relevance_summary`:
+Each `relevance_summary` must be derived SOLELY from the abstract of that specific PMID.
+NEVER borrow, carry over, or infer ANY clinical detail (case count, patient age/sex, dose, outcome) from another article's abstract.
+
+TITLE-TO-FINDING VALIDATION — run this check before writing each summary:
+  - If the title describes an animal, in-vitro, or mechanistic study → assign Tier "2" and do NOT include any patient case details in the summary.
+  - If the title says "case report" or "case series" → assign Tier "1" and include ONLY the case details explicitly stated in THAT SPECIFIC abstract.
+
+MANDATORY SELF-CHECK — before submitting `article_summaries`:
+For each entry, ask: "Does this PMID's relevance_summary contain ANY fact that came from a DIFFERENT PMID's abstract?" If yes — delete that fact immediately. Every entry must be 100% self-contained.
+
+Note: the system performs its own pre-computed isolated extraction during the screening phase and will use those values with priority. Your `article_summaries` serve as a fallback — apply the same isolation rules regardless.
+
+SOURCE ATTRIBUTION:
+- If statistical disproportionality (ROR) is calculated using `fetch_fda_adverse_events`, set `disproportionality_source` to "OpenFDA FAERS Database".
+- If counts came from a literature article, set `disproportionality_source` to "Literature / PubMed (PMID: X)".
+
+Guardrail Rules — call `abort_investigation` immediately in each of the following cases.
+For every abort: write the `reason` in the same language the user wrote their query. Be concise, professional, and helpful — tell the user exactly what went wrong and what they can do instead.
+
+─── CASE 1: query_too_vague ───
+TRIGGER: You cannot identify a specific drug name in the user's prompt (e.g. "check side effects", "analyze this drug", "investigate something").
+ACTION: abort_code = "query_too_vague"
+REASON template: "The query does not specify a drug name. Please re-submit with the name of the specific drug you want to investigate (e.g. 'Analyze adverse events for Warfarin')."
+
+─── CASE 2: multiple_drugs_detected ───
+TRIGGER: The prompt clearly names two or more distinct drugs (e.g. "compare Warfarin and Aspirin", "Metformin and Sertraline interaction").
+ACTION: abort_code = "multiple_drugs_detected"
+REASON template: "This system investigates one drug per query. Your prompt mentions multiple drugs ('[drug A]' and '[drug B]'). Please submit a separate query for each drug."
+
+─── CASE 3: non_medical_query ───
+TRIGGER: The prompt has no connection to drug safety, pharmacovigilance, adverse events, or medical literature (e.g. "write me a poem", "what is the weather", "explain quantum physics").
+ACTION: abort_code = "non_medical_query"
+REASON template: "This system is designed exclusively for pharmacovigilance signal detection. The submitted query does not relate to drug safety or medical literature. Please submit a drug safety investigation request."
+
+─── CASE 4: drug_not_recognized ───
+TRIGGER: `get_drug_profile` returns source="fallback" AND the name is clearly not a real pharmaceutical — e.g. it is gibberish ("xkqzp"), a common food ("banana", "coffee"), a chemical formula ("H2O"), or a non-drug substance.
+DO NOT TRIGGER if: the name is a real drug that simply failed API lookup (e.g. "Sildenafil", "Aspirin", "Ibuprofen"). In that case, proceed using the name for PubMed and FAERS searches.
+ACTION: abort_code = "drug_not_recognized"
+REASON template: "The name '[input]' was not recognized as a pharmaceutical compound in our drug database. Please verify the drug name and re-submit. If this is a brand name, try using the generic (active ingredient) name instead."
+
+─── CASE 5: no_literature_found ───
+TRIGGER: Both `fetch_pubmed_advanced` AND `search_drug_class_effects` returned count=0 — meaning zero articles were found for this drug and adverse event combination.
+ACTION: abort_code = "no_literature_found"
+REASON template: "No relevant medical literature was found on PubMed for '[drug name]' in relation to the investigated adverse events (search period: 2020–present). This may indicate that the signal has not been reported in recent peer-reviewed literature. Consider broadening the adverse event scope or searching manually."
+
+─── CASE 6: drug_not_in_portfolio ───
+TRIGGER: `query_knowledge_base` returns drug_in_formulary=false. This is always your FIRST tool call — fire this abort immediately without calling any other tool.
+ACTION: abort_code = "drug_not_in_portfolio"
+REASON template (SHORT — 1-2 sentences only): '[drug_name]' is not in the organization's pharmacovigilance portfolio according to the internal knowledge base. This system only performs signal detection for drugs held in the company's portfolio."""
 
 
 # ── ReAct Loop ────────────────────────────────────────────────────────────────
@@ -339,58 +424,28 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
     precomputed_tiers: dict[str, str] = {}       # pmid → pv_tier
     last_choice = None
-    MAX_ITERATIONS    = 15    # allows full investigation + report + submit
-    WALL_CLOCK_BUDGET = 240   # seconds — bail out before Vercel's 300 s hard limit
+    MAX_ITERATIONS = 20         # allows full investigation + report + submit
 
-    # Reset trace log for this run
-    _cfg.trace_log.clear()
-    start_time = time.time()
-    _trace("run_react_loop START", prompt_len=len(user_prompt))
-
-    for iteration in range(MAX_ITERATIONS):
-
-        elapsed = time.time() - start_time
-        if elapsed > WALL_CLOCK_BUDGET:
-            _trace("WALL_CLOCK_BUDGET exceeded — breaking loop early", elapsed_s=round(elapsed, 1))
-            break
-
-        _trace(f"ITER {iteration + 1}/{MAX_ITERATIONS}", msg_count=len(messages), elapsed_s=round(elapsed, 1))
+    for _ in range(MAX_ITERATIONS):
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
-        _trace(f"ITER {iteration + 1} LLM call START")
-        try:
-            response = _llm_with_retry(
-                llm_client,
-                model       = CHAT_MODEL,
-                messages    = messages,
-                tools       = TOOLS,
-                tool_choice = "auto",
-            )
-        except Exception as exc:
-            print(f"[LLM call failed after retries — breaking loop] {exc}")
-            _trace(f"ITER {iteration + 1} LLM call FAILED", error=str(exc))
-            break   # exit gracefully; fallback report is built below
-        last_choice = response.choices[0]
-        _trace(
-            f"ITER {iteration + 1} LLM call END",
-            finish_reason=last_choice.finish_reason,
-            tool_calls=len(last_choice.message.tool_calls or []),
+        response = llm_client.chat.completions.create(
+            model       = CHAT_MODEL,
+            messages    = messages,
+            tools       = TOOLS,
+            tool_choice = "auto",
         )
+        last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 
         # Agent chose to reply with text only (no tool call) — done
         if last_choice.finish_reason == "stop" or not last_choice.message.tool_calls:
-            _trace(f"ITER {iteration + 1} no tool_calls — breaking (finish_reason={last_choice.finish_reason})")
             break
 
         # ── Act: execute every tool the LLM requested ────────────────────────
         for tool_call in last_choice.message.tool_calls:
             fn_name = tool_call.function.name
-            _trace(f"ITER {iteration + 1} TOOL SELECTED", fn=fn_name)
-
-            _trace(f"ITER {iteration + 1} parsing args for {fn_name}")
             fn_args = json.loads(tool_call.function.arguments)
-            _trace(f"ITER {iteration + 1} args parsed", keys=list(fn_args.keys()))
 
             # ── Inject deterministic literature before generate_pharmacovigilance_report ──
             if fn_name == "generate_pharmacovigilance_report":
@@ -420,12 +475,9 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                         fn_args["summary_findings"], pmid_to_number, valid_pmids
                     )
 
-            _trace(f"ITER {iteration + 1} dispatch START", fn=fn_name)
             try:
                 result = dispatch(fn_name, fn_args)
-                _trace(f"ITER {iteration + 1} dispatch END", fn=fn_name, result_keys=list(result.keys()) if isinstance(result, dict) else type(result).__name__)
             except Exception as exc:
-                _trace(f"ITER {iteration + 1} dispatch EXCEPTION", fn=fn_name, error=str(exc))
                 result = {"error": f"Tool execution failed: {exc}"}
 
             # ── Collect real articles + audit from PubMed tool results ──────────
@@ -470,10 +522,8 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             })
 
             if fn_name == "submit_final_report":
-                _trace(f"ITER {iteration + 1} submit_final_report called — loop will end")
                 final_report = fn_args           # normal investigation complete
             elif fn_name == "abort_investigation":
-                _trace(f"ITER {iteration + 1} abort_investigation called", code=fn_args.get("abort_code"))
                 final_report = {                 # guardrail triggered — wrap as report
                     "status":                "aborted",
                     "abort_code":            fn_args.get("abort_code"),
@@ -487,101 +537,28 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                 }
 
         if final_report:
-            _trace(f"ITER {iteration + 1} final_report SET — exiting loop")
             break
 
-    # Fallback: agent exhausted iterations without calling submit_final_report.
-    # Force one final LLM call instructing it to generate a proper report immediately.
-    # Skip the forced LLM call if the wall-clock budget was already exceeded.
-    budget_remaining = WALL_CLOCK_BUDGET - (time.time() - start_time)
+    # Fallback if agent never called submit_final_report or abort_investigation
     if not final_report:
-        _trace("FALLBACK: loop ended without final_report", steps_so_far=len(steps), budget_remaining_s=round(budget_remaining, 1))
-        if not report_markdown and llm_client and budget_remaining > 30:
-            messages.append({
-                "role":    "user",
-                "content": (
-                    "You have reached the iteration limit. "
-                    "You MUST now call `generate_pharmacovigilance_report` followed immediately "
-                    "by `submit_final_report` using all the evidence you have gathered so far. "
-                    "Do not call any other tools. Generate the report now."
-                ),
-            })
-            _trace("FALLBACK forced LLM call START")
-            try:
-                forced = _llm_with_retry(
-                    llm_client,
-                    model       = CHAT_MODEL,
-                    messages    = messages,
-                    tools       = TOOLS,
-                    tool_choice = "auto",
-                )
-                forced_choice = forced.choices[0]
-                _trace("FALLBACK forced LLM call END", finish_reason=forced_choice.finish_reason, tool_calls=len(forced_choice.message.tool_calls or []))
-                for tool_call in (forced_choice.message.tool_calls or []):
-                    fn_name = tool_call.function.name
-                    fn_args = json.loads(tool_call.function.arguments)
-                    if fn_name == "generate_pharmacovigilance_report":
-                        summaries_dict = {**{
-                            s["pmid"]: s["relevance_summary"]
-                            for s in (fn_args.get("article_summaries") or [])
-                            if isinstance(s, dict) and s.get("pmid") in valid_pmids and s.get("relevance_summary")
-                        }, **precomputed_summaries}
-                        tiers_dict = {**{
-                            s["pmid"]: s.get("tier", "1")
-                            for s in (fn_args.get("article_summaries") or [])
-                            if isinstance(s, dict) and s.get("pmid") in valid_pmids
-                        }, **precomputed_tiers}
-                        lit_section, pmid_to_number = _build_literature_section(
-                            collected_articles, summaries_dict, pubmed_audit_entries, tiers_dict
-                        )
-                        fn_args["literature_section"] = lit_section
-                        if "summary_findings" in fn_args:
-                            fn_args["summary_findings"] = _replace_pmid_citations(
-                                fn_args["summary_findings"], pmid_to_number, valid_pmids
-                            )
-                    try:
-                        result = dispatch(fn_name, fn_args)
-                    except Exception as exc:
-                        result = {"error": str(exc)}
-                    if fn_name == "generate_pharmacovigilance_report":
-                        report_markdown = result.get("report_markdown")
-                    if fn_name == "submit_final_report":
-                        final_report = fn_args
-                        steps.append({"module": fn_name, "prompt": fn_args, "response": fn_args})
-            except Exception as exc:
-                _trace("FALLBACK forced LLM call EXCEPTION", error=str(exc))
-
-        if not final_report:
-            _trace("FALLBACK hardcoded report — no submit_final_report was ever called")
-            final_report = {
-                "confidence_score":      0,
-                "evidence_chain":        [s["module"] for s in steps],
-                "signal_level":          "no signal",
-                "novel_signal_detected": False,
-                "severe_events_found":   [],
-                "reasoning":             "Agent reached iteration limit.",
-                "recommended_action":    "Discard - No Novel Signal",
-            }
+        last_text = (
+            last_choice.message.content
+            if last_choice and last_choice.message.content
+            else "Agent completed without a final report."
+        )
+        final_report = {
+            "confidence_score":      0,
+            "evidence_chain":        [s["module"] for s in steps],
+            "signal_level":          "no signal",
+            "novel_signal_detected": False,
+            "severe_events_found":   [],
+            "reasoning":             last_text,
+            "recommended_action":    "Discard - No Novel Signal",
+        }
 
     # Attach the markdown report to final_report so index.py can expose it
     if report_markdown:
         final_report["report_markdown"] = report_markdown
-
-    _trace("run_react_loop END", total_steps=len(steps), has_report=bool(report_markdown))
-
-    # ── Inject trace log into report markdown (DEBUG only) ───────────────────
-    if _cfg.DEBUG_TRACE and _cfg.trace_log and "report_markdown" in final_report:
-        trace_lines = "\n".join(_cfg.trace_log)
-        debug_block = (
-            "\n\n---\n\n"
-            "<details>\n"
-            "<summary>🔍 Debug Trace Log (click to expand)</summary>\n\n"
-            "```\n"
-            f"{trace_lines}\n"
-            "```\n\n"
-            "</details>"
-        )
-        final_report["report_markdown"] = final_report["report_markdown"].rstrip() + debug_block
 
     return final_report, steps
 

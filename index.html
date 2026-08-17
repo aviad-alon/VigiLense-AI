@@ -293,9 +293,19 @@
 
     <!-- ── Drug Selection Card ── -->
     <section class="glass rounded-2xl p-6 sm:p-8 mb-6" aria-label="Drug selection">
-      <p class="font-heading font-bold text-slate-100 text-lg uppercase tracking-widest mb-5 text-center">
-        Select a Drug to Monitor
-      </p>
+
+      <!-- Section header: Company Portfolio -->
+      <div class="flex items-center justify-between mb-4">
+        <p class="font-heading font-bold text-slate-100 text-sm uppercase tracking-widest">
+          Company Portfolio
+        </p>
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-heading font-semibold border border-amber-500/40 text-amber-400" style="background:rgba(245,158,11,0.07);">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+          </svg>
+          Licensed compounds only
+        </span>
+      </div>
 
       <!-- Drug buttons grid — 4 per row, 2 rows -->
       <div id="drug-grid" class="grid grid-cols-4 gap-3 mb-6">
@@ -309,22 +319,23 @@
         <button class="drug-btn" id="btn-Adalimumab"    onclick="selectDrug('Adalimumab')">Adalimumab</button>
       </div>
 
-      <!-- Free-text / auto-filled query -->
-      <div class="prompt-wrapper mb-3">
+      <!-- Divider -->
+      <div class="flex items-center gap-3 mb-5">
+        <div class="flex-1 h-px bg-white/8"></div>
+        <span class="text-xs font-heading font-semibold text-slate-500 uppercase tracking-widest whitespace-nowrap">or write your own query</span>
+        <div class="flex-1 h-px bg-white/8"></div>
+      </div>
+
+      <!-- Free-text query -->
+      <div class="prompt-wrapper mb-6">
         <textarea
           id="prompt"
           rows="3"
-          placeholder="Select a drug above, or write your own query here..."
+          placeholder="e.g. Analyze hepatotoxicity signals for Metformin based on recent literature and FAERS data..."
           class="block w-full px-4 py-3 text-slate-200 placeholder-slate-500 font-body text-sm leading-relaxed resize-none focus:ring-0 transition-all"
           aria-label="Pharmacovigilance query"
         ></textarea>
       </div>
-
-      <!-- Notice -->
-      <p class="text-xs text-slate-500 font-body leading-relaxed mb-6 px-1">
-        <span class="text-amber-400 font-semibold">Notice:</span>
-        This tool is designed to investigate adverse effects of drugs from the company's licensed portfolio only.
-      </p>
 
       <!-- Run Agent – centred -->
       <div class="flex justify-center mb-4">
@@ -693,23 +704,17 @@
         } else {
           const rawResponse = data.response || '(No response returned)';
           const el = document.getElementById('response-text');
-          try {
-            if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
-              el.innerHTML = marked.parse(rawResponse);
-            } else {
-              el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(rawResponse) + '</pre>';
-            }
-          } catch (renderErr) {
-            console.error('[VigiLenseAI] markdown render error:', renderErr);
+          if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
+            el.innerHTML = marked.parse(rawResponse);
+          } else {
             el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(rawResponse) + '</pre>';
           }
-          try { renderSteps(data.steps || []); } catch (stepsErr) { console.error('[VigiLenseAI] renderSteps error:', stepsErr); }
+          renderSteps(data.steps || []);
           document.getElementById('results').classList.remove('hidden');
           if (historyOpen) loadHistory();
         }
-      } catch (fetchErr) {
-        console.error('[VigiLenseAI] fetch/network error:', fetchErr);
-        showError('Network error: could not reach the agent. (' + (fetchErr && fetchErr.message ? fetchErr.message : 'connection failed') + ')');
+      } catch {
+        showError('Network error: could not reach the agent. Is the server running?');
       } finally {
         showLoading(false);
       }
