@@ -693,17 +693,23 @@
         } else {
           const rawResponse = data.response || '(No response returned)';
           const el = document.getElementById('response-text');
-          if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
-            el.innerHTML = marked.parse(rawResponse);
-          } else {
+          try {
+            if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
+              el.innerHTML = marked.parse(rawResponse);
+            } else {
+              el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(rawResponse) + '</pre>';
+            }
+          } catch (renderErr) {
+            console.error('[VigiLenseAI] markdown render error:', renderErr);
             el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(rawResponse) + '</pre>';
           }
-          renderSteps(data.steps || []);
+          try { renderSteps(data.steps || []); } catch (stepsErr) { console.error('[VigiLenseAI] renderSteps error:', stepsErr); }
           document.getElementById('results').classList.remove('hidden');
           if (historyOpen) loadHistory();
         }
-      } catch {
-        showError('Network error: could not reach the agent. Is the server running?');
+      } catch (fetchErr) {
+        console.error('[VigiLenseAI] fetch/network error:', fetchErr);
+        showError('Network error: could not reach the agent. (' + (fetchErr && fetchErr.message ? fetchErr.message : 'connection failed') + ')');
       } finally {
         showLoading(false);
       }
