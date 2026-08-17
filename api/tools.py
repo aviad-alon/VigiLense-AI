@@ -21,7 +21,6 @@ Tools:
 import json
 import math
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import requests
 from config import llm_client, pc, supabase, EMBED_MODEL, PINECONE_INDEX, CHAT_MODEL
@@ -990,17 +989,9 @@ def _extract_article_summaries(
             # Fail gracefully — article remains without pv_tier/pv_summary;
             # agent.py will fall back to the LLM-provided summary at report time.
 
-    # Run all per-article extractions in parallel — reduces Phase 2 from
-    # N×(latency per call) to ~1×(latency per call) wall-clock time.
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(_extract_one, art) for art in articles]
-        for future in as_completed(futures):
-            try:
-                future.result()
-            except Exception as exc:
-                # _extract_one already catches its own errors; this guards against
-                # unexpected worker-level failures (e.g. memory error, OS signal).
-                print(f"[Phase 2 extraction worker error] {exc}")
+    # Run per-article extractions sequentially.
+    for art in articles:
+        _extract_one(art)
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
