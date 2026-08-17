@@ -12,6 +12,16 @@ from openai import OpenAI
 from pinecone import Pinecone
 from supabase import create_client, Client
 
+# ── Debug trace flag ─────────────────────────────────────────────────────────
+# Set to True to print step-by-step crash diagnostics.
+# Flip to False before project submission for clean output.
+DEBUG_TRACE = True
+
+# Shared mutable trace log — populated by _trace() in agent.py and tools.py.
+# Reset at the start of each run_react_loop call. Never import as "from config import trace_log"
+# (that copies the reference at import time) — always access as config.trace_log.
+trace_log: list = []
+
 # ── Model names ───────────────────────────────────────────────────────────────
 CHAT_MODEL     = "NBUECSE-gpt-5-mini"
 EMBED_MODEL    = "NBUECSE-text-embedding-3-small"

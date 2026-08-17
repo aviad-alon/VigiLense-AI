@@ -23,7 +23,19 @@ import math
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 import requests
+import config as _cfg
 from config import llm_client, pc, supabase, EMBED_MODEL, PINECONE_INDEX, CHAT_MODEL
+
+
+def _trace(label: str, **kwargs) -> None:
+    """Print a structured crash-point trace and accumulate in config.trace_log.
+    Gated by DEBUG_TRACE in config.py."""
+    if not _cfg.DEBUG_TRACE:
+        return
+    parts = " | ".join(f"{k}={v!r}" for k, v in kwargs.items()) if kwargs else ""
+    line = f"[TRACE] {label}" + (f" — {parts}" if parts else "")
+    print(line)
+    _cfg.trace_log.append(line)
 
 OPENFDA_LABEL_URL  = "https://api.fda.gov/drug/label.json"
 OPENFDA_FAERS_URL  = "https://api.fda.gov/drug/event.json"
@@ -831,11 +843,15 @@ def _screen_articles_llm(
     if not articles or not llm_client:
         return articles
 
+    _trace("_screen_articles_llm START", total_articles=len(articles))
+
     # ── Phase 1: Batch relevance screening ───────────────────────────────────
     relevant: list[dict] = []
 
     for batch_start in range(0, len(articles), SCREENING_BATCH_SIZE):
         batch = articles[batch_start : batch_start + SCREENING_BATCH_SIZE]
+        batch_num = batch_start // SCREENING_BATCH_SIZE + 1
+        _trace(f"Phase1 batch {batch_num} START", size=len(batch))
 
         articles_block = ""
         for idx, art in enumerate(batch, 1):
@@ -870,6 +886,7 @@ def _screen_articles_llm(
             "Return ONLY valid JSON — no explanation, no markdown."
         )
 
+        _trace(f"Phase1 batch {batch_num} LLM call START")
         try:
             resp = llm_client.chat.completions.create(
                 model=CHAT_MODEL,
@@ -877,19 +894,25 @@ def _screen_articles_llm(
                 temperature=1,
             )
             raw = resp.choices[0].message.content.strip()
+            _trace(f"Phase1 batch {batch_num} LLM call END", raw_len=len(raw))
             if "```" in raw:
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:].strip()
+            _trace(f"Phase1 batch {batch_num} JSON parse START")
             screened = json.loads(raw)
             relevant_pmids = {
                 item["pmid"] for item in screened
                 if isinstance(item, dict) and "pmid" in item
             }
             relevant.extend(a for a in batch if a.get("pmid") in relevant_pmids)
+            _trace(f"Phase1 batch {batch_num} DONE", relevant_in_batch=len(relevant_pmids))
         except Exception as exc:
-            print(f"[PubMed screening error — batch {batch_start // SCREENING_BATCH_SIZE + 1}] {exc}")
+            _trace(f"Phase1 batch {batch_num} EXCEPTION", error=str(exc))
+            print(f"[PubMed screening error — batch {batch_num}] {exc}")
             relevant.extend(batch)  # fail-open
+
+    _trace("Phase1 COMPLETE — starting Phase2", total_relevant=len(relevant))
 
     # ── Phase 2: Per-article isolated tier + summary extraction ──────────────
     _extract_article_summaries(relevant, investigation_context)
@@ -922,6 +945,7 @@ def _extract_article_summaries(
         pmid     = art.get("pmid", "")
         title    = art.get("title", "Unknown title")
         abstract = (art.get("abstract") or "")[:2000]
+        _trace(f"Phase2 extract PMID:{pmid} START", title_len=len(title), abstract_len=len(abstract))
 
         prompt = (
             "You are a Pharmacovigilance Literature Analyst.\n\n"
@@ -967,6 +991,7 @@ def _extract_article_summaries(
             '{"tier": "1" or "2", "summary": "your extraction here"}'
         )
 
+        _trace(f"Phase2 PMID:{pmid} LLM call START")
         try:
             resp = llm_client.chat.completions.create(
                 model=CHAT_MODEL,
@@ -974,24 +999,31 @@ def _extract_article_summaries(
                 temperature=1,
             )
             raw = resp.choices[0].message.content.strip()
+            _trace(f"Phase2 PMID:{pmid} LLM call END", raw_len=len(raw))
             if "```" in raw:
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:].strip()
+            _trace(f"Phase2 PMID:{pmid} JSON parse START")
             extracted = json.loads(raw)
             if isinstance(extracted, dict):
-                if extracted.get("tier") in ("1", "2"):
-                    art["pv_tier"] = extracted["tier"]
+                tier = extracted.get("tier")
+                if tier in ("1", "2"):
+                    art["pv_tier"] = tier
                 if isinstance(extracted.get("summary"), str) and extracted["summary"].strip():
                     art["pv_summary"] = extracted["summary"].strip()
+                _trace(f"Phase2 PMID:{pmid} DONE", tier=tier)
         except Exception as exc:
+            _trace(f"Phase2 PMID:{pmid} EXCEPTION", error=str(exc))
             print(f"[Article summary extraction error — PMID {pmid}] {exc}")
             # Fail gracefully — article remains without pv_tier/pv_summary;
             # agent.py will fall back to the LLM-provided summary at report time.
 
+    _trace("Phase2 _extract_article_summaries START", count=len(articles))
     # Run per-article extractions sequentially.
     for art in articles:
         _extract_one(art)
+    _trace("Phase2 _extract_article_summaries DONE")
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
@@ -1014,6 +1046,7 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         "sort":    "relevance",
     }
 
+    _trace("_pubmed_fetch Step1 count START", term=term[:80])
     # Step 1: count only
     total_count = 0
     try:
@@ -1024,7 +1057,9 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         )
         count_resp.raise_for_status()
         total_count = int(count_resp.json().get("esearchresult", {}).get("count", 0))
+        _trace("_pubmed_fetch Step1 count END", total_count=total_count)
     except Exception as exc:
+        _trace("_pubmed_fetch Step1 count FAILED", error=str(exc))
         print(f"[PubMed count step failed — term='{term}'] {exc}")
         return [], {"date_range": f"{min_year} – present", "total_found": 0, "total_fetched": 0}
 
@@ -1039,6 +1074,7 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
 
     # Step 2: fetch top PMIDs by relevance
     fetch_n = min(total_count, max_results)
+    _trace("_pubmed_fetch Step2 IDs START", fetch_n=fetch_n)
     id_list: list[str] = []
     try:
         id_resp = requests.get(
@@ -1048,13 +1084,16 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         )
         id_resp.raise_for_status()
         id_list = id_resp.json().get("esearchresult", {}).get("idlist", [])
+        _trace("_pubmed_fetch Step2 IDs END", id_count=len(id_list))
     except Exception as exc:
+        _trace("_pubmed_fetch Step2 IDs FAILED", error=str(exc))
         print(f"[PubMed ID-fetch step failed — term='{term}'] {exc}")
         return [], audit_info
     if not id_list:
         return [], audit_info
 
     # Step 3: efetch full records
+    _trace("_pubmed_fetch Step3 efetch START", id_count=len(id_list))
     root = None
     try:
         fetch_resp = requests.get(
@@ -1064,7 +1103,9 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         )
         fetch_resp.raise_for_status()
         root = ET.fromstring(fetch_resp.content)
+        _trace("_pubmed_fetch Step3 efetch END — XML parsed OK")
     except Exception as exc:
+        _trace("_pubmed_fetch Step3 efetch FAILED", error=str(exc))
         print(f"[PubMed efetch step failed — term='{term}'] {exc}")
         return [], audit_info
 
@@ -1115,6 +1156,7 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         })
 
     audit_info["total_fetched"] = len(articles)
+    _trace("_pubmed_fetch DONE", articles_parsed=len(articles))
     return articles, audit_info
 
 
@@ -1265,14 +1307,20 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         except Exception:
             return []
 
+    _trace("fetch_fda_adverse_events START", drug=drug_name, event=adverse_event)
     try:
         drug_q  = f'patient.drug.medicinalproduct:"{drug_name}"'
         event_q = f'patient.reaction.reactionmeddrapt:"{adverse_event}"'
 
+        _trace("FAERS count a (drug+event) START")
         a           = _count(f"{drug_q} AND {event_q}")
+        _trace("FAERS count total_drug START")
         total_drug  = _count(drug_q)
+        _trace("FAERS count total_event START")
         total_event = _count(event_q)
+        _trace("FAERS count total_all START")
         total_all   = _count()           # full FAERS corpus — no filter
+        _trace("FAERS counts DONE", a=a, total_drug=total_drug, total_event=total_event, total_all=total_all)
 
         if total_drug == 0:
             return {
@@ -1339,6 +1387,7 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         }
 
     except TimeoutError as e:
+        _trace("fetch_fda_adverse_events TIMEOUT", error=str(e))
         return {
             "a": None, "b": None, "c": None, "d": None,
             "source":       "OpenFDA FAERS API",
@@ -1346,6 +1395,7 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
             "error":        str(e)
         }
     except Exception as exc:
+        _trace("fetch_fda_adverse_events EXCEPTION", error=str(exc))
         return {
             "a": None, "b": None, "c": None, "d": None,
             "source":       "OpenFDA FAERS API",
@@ -1422,12 +1472,15 @@ def query_knowledge_base(
             "chunks":  []
         }
 
+    _trace("query_knowledge_base START", drug=drug_name, query=query[:60])
     try:
         # Embed the clinical query
+        _trace("query_knowledge_base embed START")
         embedding = llm_client.embeddings.create(
             input=[f"{drug_name} {query}"],
             model=EMBED_MODEL
         ).data[0].embedding
+        _trace("query_knowledge_base embed END", dim=len(embedding))
 
         # Build metadata filter — must match the field name used in seed_db.py
         metadata_filter: dict = {"search_name": drug_name.lower()}
@@ -1437,12 +1490,14 @@ def query_knowledge_base(
         index = pc.Index(PINECONE_INDEX)
 
         # Query with drug-specific filter
+        _trace("query_knowledge_base Pinecone query START", top_k=top_k)
         filtered_result = index.query(
             vector=embedding,
             top_k=top_k,
             include_metadata=True,
             filter=metadata_filter
         )
+        _trace("query_knowledge_base Pinecone query END", matches=len(filtered_result.matches))
 
         # drug_in_formulary = True only if the filtered query found results for this specific drug
         drug_in_formulary = bool(filtered_result.matches)
@@ -1476,6 +1531,7 @@ def query_knowledge_base(
         }
 
     except Exception as exc:
+        _trace("query_knowledge_base EXCEPTION", error=str(exc))
         return {
             "status":  "error",
             "message": str(exc),

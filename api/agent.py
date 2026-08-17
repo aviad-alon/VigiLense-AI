@@ -9,8 +9,22 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 import json
 import re
 import time
+import config as _cfg
 from config import llm_client, supabase, CHAT_MODEL
 from tools import TOOLS, dispatch
+
+
+# ── Debug Trace Helper ─────────────────────────────────────────────────────────
+
+def _trace(label: str, **kwargs) -> None:
+    """Print a structured crash-point trace and accumulate in config.trace_log.
+    Gated by DEBUG_TRACE in config.py."""
+    if not _cfg.DEBUG_TRACE:
+        return
+    parts = " | ".join(f"{k}={v!r}" for k, v in kwargs.items()) if kwargs else ""
+    line = f"[TRACE] {label}" + (f" — {parts}" if parts else "")
+    print(line)
+    _cfg.trace_log.append(line)
 
 
 # ── LLM Call Retry Helper ──────────────────────────────────────────────────────
@@ -461,9 +475,16 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     last_choice = None
     MAX_ITERATIONS = 15         # allows full investigation + report + submit
 
-    for _ in range(MAX_ITERATIONS):
+    # Reset trace log for this run
+    _cfg.trace_log.clear()
+    _trace("run_react_loop START", prompt_len=len(user_prompt))
+
+    for iteration in range(MAX_ITERATIONS):
+
+        _trace(f"ITER {iteration + 1}/{MAX_ITERATIONS}", msg_count=len(messages))
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
+        _trace(f"ITER {iteration + 1} LLM call START")
         try:
             response = _llm_with_retry(
                 llm_client,
@@ -474,18 +495,29 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             )
         except Exception as exc:
             print(f"[LLM call failed after retries — breaking loop] {exc}")
+            _trace(f"ITER {iteration + 1} LLM call FAILED", error=str(exc))
             break   # exit gracefully; fallback report is built below
         last_choice = response.choices[0]
+        _trace(
+            f"ITER {iteration + 1} LLM call END",
+            finish_reason=last_choice.finish_reason,
+            tool_calls=len(last_choice.message.tool_calls or []),
+        )
         messages.append(last_choice.message)   # add assistant turn to history
 
         # Agent chose to reply with text only (no tool call) — done
         if last_choice.finish_reason == "stop" or not last_choice.message.tool_calls:
+            _trace(f"ITER {iteration + 1} no tool_calls — breaking (finish_reason={last_choice.finish_reason})")
             break
 
         # ── Act: execute every tool the LLM requested ────────────────────────
         for tool_call in last_choice.message.tool_calls:
             fn_name = tool_call.function.name
+            _trace(f"ITER {iteration + 1} TOOL SELECTED", fn=fn_name)
+
+            _trace(f"ITER {iteration + 1} parsing args for {fn_name}")
             fn_args = json.loads(tool_call.function.arguments)
+            _trace(f"ITER {iteration + 1} args parsed", keys=list(fn_args.keys()))
 
             # ── Inject deterministic literature before generate_pharmacovigilance_report ──
             if fn_name == "generate_pharmacovigilance_report":
@@ -515,9 +547,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                         fn_args["summary_findings"], pmid_to_number, valid_pmids
                     )
 
+            _trace(f"ITER {iteration + 1} dispatch START", fn=fn_name)
             try:
                 result = dispatch(fn_name, fn_args)
+                _trace(f"ITER {iteration + 1} dispatch END", fn=fn_name, result_keys=list(result.keys()) if isinstance(result, dict) else type(result).__name__)
             except Exception as exc:
+                _trace(f"ITER {iteration + 1} dispatch EXCEPTION", fn=fn_name, error=str(exc))
                 result = {"error": f"Tool execution failed: {exc}"}
 
             # ── Collect real articles + audit from PubMed tool results ──────────
@@ -562,8 +597,10 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             })
 
             if fn_name == "submit_final_report":
+                _trace(f"ITER {iteration + 1} submit_final_report called — loop will end")
                 final_report = fn_args           # normal investigation complete
             elif fn_name == "abort_investigation":
+                _trace(f"ITER {iteration + 1} abort_investigation called", code=fn_args.get("abort_code"))
                 final_report = {                 # guardrail triggered — wrap as report
                     "status":                "aborted",
                     "abort_code":            fn_args.get("abort_code"),
@@ -577,11 +614,13 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                 }
 
         if final_report:
+            _trace(f"ITER {iteration + 1} final_report SET — exiting loop")
             break
 
     # Fallback: agent exhausted iterations without calling submit_final_report.
     # Force one final LLM call instructing it to generate a proper report immediately.
     if not final_report:
+        _trace("FALLBACK: loop ended without final_report", steps_so_far=len(steps))
         if not report_markdown and llm_client:
             messages.append({
                 "role":    "user",
@@ -592,6 +631,7 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     "Do not call any other tools. Generate the report now."
                 ),
             })
+            _trace("FALLBACK forced LLM call START")
             try:
                 forced = _llm_with_retry(
                     llm_client,
@@ -601,6 +641,7 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     tool_choice = "auto",
                 )
                 forced_choice = forced.choices[0]
+                _trace("FALLBACK forced LLM call END", finish_reason=forced_choice.finish_reason, tool_calls=len(forced_choice.message.tool_calls or []))
                 for tool_call in (forced_choice.message.tool_calls or []):
                     fn_name = tool_call.function.name
                     fn_args = json.loads(tool_call.function.arguments)
@@ -632,10 +673,11 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     if fn_name == "submit_final_report":
                         final_report = fn_args
                         steps.append({"module": fn_name, "prompt": fn_args, "response": fn_args})
-            except Exception:
-                pass
+            except Exception as exc:
+                _trace("FALLBACK forced LLM call EXCEPTION", error=str(exc))
 
         if not final_report:
+            _trace("FALLBACK hardcoded report — no submit_final_report was ever called")
             final_report = {
                 "confidence_score":      0,
                 "evidence_chain":        [s["module"] for s in steps],
@@ -649,6 +691,22 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     # Attach the markdown report to final_report so index.py can expose it
     if report_markdown:
         final_report["report_markdown"] = report_markdown
+
+    _trace("run_react_loop END", total_steps=len(steps), has_report=bool(report_markdown))
+
+    # ── Inject trace log into report markdown (DEBUG only) ───────────────────
+    if _cfg.DEBUG_TRACE and _cfg.trace_log and "report_markdown" in final_report:
+        trace_lines = "\n".join(_cfg.trace_log)
+        debug_block = (
+            "\n\n---\n\n"
+            "<details>\n"
+            "<summary>🔍 Debug Trace Log (click to expand)</summary>\n\n"
+            "```\n"
+            f"{trace_lines}\n"
+            "```\n\n"
+            "</details>"
+        )
+        final_report["report_markdown"] = final_report["report_markdown"].rstrip() + debug_block
 
     return final_report, steps
 
