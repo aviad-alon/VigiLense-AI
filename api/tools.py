@@ -403,7 +403,12 @@ TOOLS = [
                 "properties": {
                     "drug_name": {
                         "type": "string",
-                        "description": "Name of the drug under investigation."
+                        "description": (
+                            "Name of the drug under investigation. "
+                            "⛔ BINDING CONSTRAINT: this value is the SOLE drug this entire report concerns. "
+                            "Every field in this call — summary_findings, recommendations, adverse_event — "
+                            "must reference ONLY this drug. Never write a different drug's name anywhere in this call."
+                        )
                     },
                     "adverse_event": {
                         "type": "string",
@@ -466,6 +471,10 @@ TOOLS = [
                             "(the Literature section above already contains full article text).\n\n"
                             "SCOPE RULE: Every bullet must concern the investigated AE or a clinically adjacent "
                             "organ-system finding. Exclude unrelated categories even if they appear in the label.\n\n"
+                            "⛔ DRUG ISOLATION RULE: Every bullet must attribute findings to the drug in `drug_name`. "
+                            "Never write a different drug's name — not in label citations, not in mechanism descriptions, "
+                            "not in any context. If you find yourself writing a drug name other than the one in `drug_name`, "
+                            "you have made an error. Stop and correct it.\n\n"
                             "EMPTY-STATE RULE: If no literature was retrieved AND no novel FAERS signal exists, "
                             "write one concise paragraph under '### Label Safety Baseline' only. "
                             "Skip the other two sections entirely — do not repeat 'no findings' under multiple headings.\n\n"
