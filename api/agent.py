@@ -178,7 +178,8 @@ Once portfolio membership is confirmed, determine the investigation mode and iss
   a. PubMed broad search: `fetch_pubmed_advanced` with:
        query_term = '"[drug_name]" AND ("adverse drug reaction" OR "adverse effect" OR "toxicity" OR "case report" OR "pharmacovigilance")'
        investigation_context = "[drug] — broad safety surveillance (any adverse event)"
-       surveillance_mode = true   ← REQUIRED — enables broader gate criteria that accept systematic reviews
+       surveillance_mode = true   ← REQUIRED — enables broader gate, date sort, and 2021-present window
+       (min_year is automatically enforced to 2021 by the pipeline when surveillance_mode=true)
   b. FAERS AE discovery: `fetch_top_faers_events` with drug_name — call IN PARALLEL with (a).
        Returns top 15 most-reported AEs from spontaneous reports, independent of literature.
 
@@ -325,7 +326,8 @@ GUARDRAILS — call `abort_investigation` immediately. Write reason in the user'
 2. multiple_drugs_detected: Two or more distinct drugs named.
 3. non_medical_query: No connection to drug safety or pharmacovigilance.
 4. drug_not_recognized: `get_drug_profile` returns source="fallback" AND name is clearly not a real pharmaceutical (gibberish, food, non-drug). Do NOT trigger for real drugs that failed API lookup.
-5. no_literature_found: Both `fetch_pubmed_advanced` AND `search_drug_class_effects` returned count=0.
+5. no_literature_found: Both `fetch_pubmed_advanced` AND `search_drug_class_effects` returned audit.total_found=0 — meaning PubMed itself found zero matching articles.
+   ⚠️ DO NOT trigger if count=0 but audit.total_found > 0: articles were fetched but excluded by LLM screening — adapt the query or widen investigation_context and retry once before aborting.
 6. drug_not_in_portfolio: `query_knowledge_base` returns drug_in_formulary=false (always first call)."""
 
 

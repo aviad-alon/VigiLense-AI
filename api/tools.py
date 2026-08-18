@@ -897,8 +897,9 @@ def calculate_disproportionality(
 PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
-SCREENING_BATCH_SIZE  = 30   # articles per LLM screening call
-MAX_PUBMED_SCREEN     = 30   # cap on articles fetched when screening is active
+SCREENING_BATCH_SIZE     = 30   # articles per LLM screening call
+MAX_PUBMED_SCREEN        = 30   # targeted mode: articles fetched when screening is active
+MAX_PUBMED_SCREEN_BROAD  = 50   # broad surveillance mode: larger window, recent-date sort
 
 
 def _screen_articles_llm(
@@ -939,6 +940,31 @@ def _screen_articles_llm(
                 f"Abstract: {abstract_snippet}\n"
             )
 
+        if surveillance_mode:
+            include_block = (
+                "INCLUDE an article if it reports ANY adverse event data for this drug:\n"
+                "- Case report, case series, RCT, cohort study, or observational study\n"
+                "- Systematic review or meta-analysis that lists AE frequencies or incidence for this drug\n"
+                "- Pharmacovigilance database study (FAERS, VigiBase, WHO) with case counts\n"
+                "- Registry data or post-marketing surveillance report\n\n"
+                "EXCLUDE ONLY if:\n"
+                "- The drug is mentioned only in passing with zero drug-specific AE data\n"
+                "- Pure animal, in-vitro, or mechanistic study with no patient outcomes\n"
+                "- Completely unrelated disease area with no safety overlap\n\n"
+            )
+        else:
+            include_block = (
+                "INCLUDE an article if it contains ANY of:\n"
+                "- Direct clinical, case report, or trial data on the specific drug\n"
+                "- Adverse event or safety signal data related to the query\n"
+                "- Mechanistic or pharmacological evidence for the drug–event relationship\n"
+                "- Pharmacovigilance database data (FAERS, VigiBase, WHO) involving the drug\n\n"
+                "EXCLUDE if:\n"
+                "- The drug is only mentioned in passing with no specific data\n"
+                "- The study population is entirely unrelated to the query context\n"
+                "- It is a review with no original drug-specific data\n\n"
+            )
+
         prompt = (
             "You are a Pharmacovigilance Literature Screener.\n\n"
             f"Investigation Context:\n{investigation_context}\n\n"
@@ -947,16 +973,8 @@ def _screen_articles_llm(
             "efficacy, or epidemiological data DIRECTLY related to the investigation "
             "context — considering the specific drug, its active ingredients, "
             "the adverse event, and the target population.\n\n"
-            "INCLUDE an article if it contains ANY of:\n"
-            "- Direct clinical, case report, or trial data on the specific drug\n"
-            "- Adverse event or safety signal data related to the query\n"
-            "- Mechanistic or pharmacological evidence for the drug–event relationship\n"
-            "- Pharmacovigilance database data (FAERS, VigiBase, WHO) involving the drug\n\n"
-            "EXCLUDE if:\n"
-            "- The drug is only mentioned in passing with no specific data\n"
-            "- The study population is entirely unrelated to the query context\n"
-            "- It is a review with no original drug-specific data\n\n"
-            f"Articles:\n{articles_block}\n\n"
+            + include_block
+            + f"Articles:\n{articles_block}\n\n"
             "Respond with a JSON array for ONLY the relevant articles:\n"
             '[{"pmid": "12345678", "reason": "One sentence explaining relevance"}, ...]\n'
             "If none are relevant, return: []\n"
@@ -1141,13 +1159,23 @@ def _extract_article_summaries(
                 art["pv_include"] = True  # fail-open
 
 
-def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
+def _pubmed_fetch(
+    term: str,
+    max_results: int,
+    min_year: int = 2020,
+    sort: str = "relevance",
+) -> tuple[list[dict], dict]:
     """
-    Two-step PubMed retrieval with configurable date range.
+    Two-step PubMed retrieval with configurable date range and sort order.
 
     Step 1 — esearch retmax=0  → get total matching count
-    Step 2 — esearch retmax=N  → get top-N PMIDs by relevance (N = min(count, max_results))
+    Step 2 — esearch retmax=N  → get top-N PMIDs sorted by `sort`
     Step 3 — efetch            → parse full article records
+
+    sort="relevance" (default) — citation-weighted; good for targeted queries.
+    sort="date"               — newest first; good for broad surveillance so the
+                                agent gets recent case reports instead of
+                                high-citation legacy reviews.
 
     Returns:
         articles   — list of structured article dicts
@@ -1158,7 +1186,7 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         "db":      "pubmed",
         "term":    dated_term,
         "retmode": "json",
-        "sort":    "relevance",
+        "sort":    sort,
     }
 
     # Step 1: count only
@@ -1263,12 +1291,22 @@ def fetch_pubmed_advanced(
     and runs LLM relevance screening before returning results.
     Returns structured article records with full abstract text and audit metadata.
 
-    surveillance_mode=True: passes broader gate criteria to the LLM screener so that
-    systematic reviews enumerating drug-specific AEs are accepted (not excluded as in targeted mode).
+    surveillance_mode=True: passes broader gate criteria to the LLM screener, increases the
+    fetch window to MAX_PUBMED_SCREEN_BROAD, enforces min_year ≥ 2021 so recent case reports
+    and observational studies are prioritised, and sorts by date (not citation weight) so that
+    high-citation legacy reviews do not crowd out recent evidence.
     """
     try:
-        fetch_limit = MAX_PUBMED_SCREEN if investigation_context else max_results
-        articles, audit = _pubmed_fetch(query_term, fetch_limit, min_year)
+        if surveillance_mode and investigation_context:
+            fetch_limit = MAX_PUBMED_SCREEN_BROAD
+            effective_min_year = max(min_year, 2021)
+            sort_order = "date"
+        else:
+            fetch_limit = MAX_PUBMED_SCREEN if investigation_context else max_results
+            effective_min_year = min_year
+            sort_order = "relevance"
+
+        articles, audit = _pubmed_fetch(query_term, fetch_limit, effective_min_year, sort_order)
 
         if investigation_context and articles:
             articles = _screen_articles_llm(articles, investigation_context, surveillance_mode)
@@ -1367,7 +1405,8 @@ def fetch_top_faers_events(drug_name: str, limit: int = 15) -> dict:
     Note: high report count does NOT imply causality or unlabeled status.
     Each returned AE must be classified via query_knowledge_base.
     """
-    drug_q = f'patient.drug.medicinalproduct:"{drug_name}"'
+    # FAERS stores drug names as reported — predominantly UPPERCASE.
+    drug_q = f'patient.drug.medicinalproduct:"{drug_name.upper()}"'
     try:
         resp = requests.get(
             OPENFDA_FAERS_URL,
@@ -1462,8 +1501,10 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
             return []
 
     try:
-        drug_q  = f'patient.drug.medicinalproduct:"{drug_name}"'
-        event_q = f'patient.reaction.reactionmeddrapt:"{adverse_event}"'
+        # FAERS stores drug names as reported — predominantly UPPERCASE.
+        # Uppercasing maximises match coverage without changing API semantics.
+        drug_q  = f'patient.drug.medicinalproduct:"{drug_name.upper()}"'
+        event_q = f'patient.reaction.reactionmeddrapt:"{adverse_event.upper()}"'
 
         a           = _count(f"{drug_q} AND {event_q}")
         total_drug  = _count(drug_q)
