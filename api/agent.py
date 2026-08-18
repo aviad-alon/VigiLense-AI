@@ -293,25 +293,28 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 1. All numerical/statistical parameters MUST match upstream tool outputs exactly.
 2. When you have FAERS disproportionality data, ALWAYS pass `case_counts` with the raw a/b/c/d values from `fetch_fda_adverse_events` so the 2×2 matrix appears in the statistics table.
 3. **`article_summaries` parameter:** INCLUDE ALL articles returned by `fetch_pubmed_advanced` or `search_drug_class_effects` — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools. For each article provide `pmid` (exact, do not fabricate) and `relevance_summary` (1–3 sentences: study design, population size, key finding with effect size and CI if reported, clinical outcome — no titles or author names). See ARTICLE SUMMARIES rules in Section 3.
-4. **`summary_findings` structure:** Use the exact four markdown subheadings below. See INVESTIGATION SCOPE CONSTRAINT in Section 3 for what to include/exclude in each section.
+4. **`summary_findings` structure:** Follow this exact procedure before writing anything:
+
+**PRE-SYNTHESIS ENUMERATION (mandatory — do this before writing a single word):**
+Go through every PMID in the literature section. For each one write a mental note:
+`PMID XXXXXXXX → [Novel / Known / Not applicable] — [one-line reason]`
+You MUST do this for ALL PMIDs. Only after completing this list may you write the sections below.
 
 ```markdown
 ### Internal KB / FDA Label Baseline
-- [What the KB/label already documents about the investigated AE or adjacent organ system findings. Reference specific label sections. Do NOT list unrelated safety categories.]
+- [What the FDA label / KB already documents for the investigated AE. Reference specific label sections. No unrelated warnings.]
 
 ### Novel Findings
-**MANDATORY:** Go through EVERY article in the Literature section above. For each article, determine:
-  (a) Is this finding documented in the FDA label / KB? → goes to Known/Expected Findings below.
-  (b) Is this finding NOT in the label, or extends it with new population/mechanism/severity data? → include here as a Novel Finding.
-Do NOT skip articles. Do NOT collapse distinct findings into a single bullet. Each meaningful novel finding gets its own bullet.
-You MAY cross-reference articles that support the same signal (e.g., "Two case reports [PMID: X] [PMID: Y] both document...").
+Every PMID you classified as "Novel" above MUST appear here as its own bullet — no exceptions, no omissions.
+You MAY cross-reference PMIDs that converge on the same signal (e.g., "Two independent case reports [PMID: X] [PMID: Y] both document...").
+Prioritise by clinical severity (life-threatening first, then serious, then mild).
 Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 
 ### Known / Expected Findings
-- [Label-consistent findings only — adverse events already documented in the FDA label for this drug. Keep brief.]
+- [Label-consistent findings only. Keep brief — one bullet per AE category.]
 
 ### Signal Assessment
-- [Synthesize the overall evidence: number of novel signals found, clinical severity, convergence across multiple articles, disproportionality strength if available. Write 3-5 sentences — this is your expert judgment, not a list.]
+Write 4-6 sentences of expert synthesis: how many distinct novel signals were found, their clinical severity, whether multiple independent sources converge on the same signal, disproportionality data if available, and your overall confidence level. This is your professional judgment — not a bullet list.
 ```
 
 ---

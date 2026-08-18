@@ -837,22 +837,20 @@ def _screen_articles_llm(
             f"Review the following {len(batch)} candidate articles. "
             "Apply HIGH selectivity: only include articles with substantive, "
             "direct pharmacovigilance value for the specific drug and adverse event in the investigation context.\n\n"
+            "HARD GATE — EXCLUDE IMMEDIATELY if either of these is true (do not read further):\n"
+            "  • Study population is non-human (animals, zebrafish, rodents, cell lines) — even if the drug is the primary subject\n"
+            "  • Study is about ecotoxicology, environmental contamination, aquatic toxicity, or ecology\n\n"
             "INCLUDE only if ALL of the following are true:\n"
-            "- The specific drug (not just its class) is a PRIMARY subject of the study\n"
-            "- The article reports an original safety finding, adverse event signal, or case directly relevant to the investigation\n"
-            "- The study population involves humans (clinical trial, cohort, case report, pharmacovigilance database)\n"
-            "- The finding is substantive and not already a well-known expected effect\n\n"
+            "- HUMAN subjects only (clinical trial, observational cohort, case report, pharmacovigilance database)\n"
+            "- The investigated drug (or its generics/brand names/pharmacological class) is a PRIMARY safety exposure — not just a co-medication or passing mention\n"
+            "- The article reports an original adverse event, safety signal, toxicity, or tolerability finding\n\n"
             "EXCLUDE if ANY of the following applies:\n"
-            "- Animal study, in-vitro experiment, or computational/mechanistic study with no direct human clinical data\n"
-            "- Ecotoxicology, environmental contamination, aquatic toxicology, or ecological impact study\n"
-            "- Agricultural, veterinary, or wildlife study — even if the drug name appears\n"
-            "- Non-human behavioral model (rodent, zebrafish, etc.) without direct human translation data\n"
-            "- The investigated drug is only a comparator, secondary agent, or briefly mentioned — not the primary subject\n"
-            "- Efficacy study with no safety/adverse event data relevant to the investigation\n"
+            "- Animal study, in-vitro, or computational study — no exceptions even if drug is primary subject\n"
+            "- Drug appears only as a comparator, co-medication with no safety data, or brief mention\n"
+            "- Pure efficacy study with zero safety/AE outcome data\n"
             "- Narrative review, editorial, commentary, or letter with no original data\n"
-            "- The drug is mentioned only in passing with no drug-specific outcome data\n"
-            "- The study's adverse events are entirely unrelated to the investigated adverse event\n\n"
-            "SCOPE: This system operates under ICH E2D — only human pharmacovigilance data is in scope.\n\n"
+            "- Article's primary topic is an unrelated drug or unrelated therapeutic area\n\n"
+            "SCOPE: ICH E2D — human pharmacovigilance data only.\n\n"
             f"Articles:\n{articles_block}\n\n"
             "Respond with a JSON array for ONLY the relevant articles:\n"
             '[{"pmid": "12345678", "reason": "One sentence explaining direct relevance to the drug and adverse event"}, ...]\n'
@@ -889,13 +887,11 @@ def _screen_articles_llm(
         relevant = relevant[:MAX_PHASE2_ARTICLES]
     _extract_article_summaries(relevant, investigation_context)
 
-    # ── Post-Phase-2 filter: drop articles where Phase 2 found no drug-specific data ──
-    # Phase 2 writes "NO_DRUG_DATA" when the investigated drug is not a primary subject.
-    # These articles passed Phase 1 by mistake and must not appear in the final report.
-    relevant = [
-        a for a in relevant
-        if (a.get("pv_summary") or "") != "NO_DRUG_DATA"
-    ]
+    # ── Post-Phase-2 filter: drop articles flagged irrelevant by Phase 2 ──────
+    # Phase 2 sets pv_keep=False for: non-human studies, ecotox, wrong drug,
+    # unrelated articles. Only articles where pv_keep is True (or unset, i.e.
+    # Phase 2 extraction failed — fail-open) are passed to the final report.
+    relevant = [a for a in relevant if a.get("pv_keep", True)]
 
     return relevant
 
@@ -934,35 +930,31 @@ def _extract_article_summaries(
             f"Title: {title}\n"
             f"Abstract: {abstract}\n"
             f"=== END ARTICLE | PMID: {pmid} ===\n\n"
-            "────────────────────────────────────────\n"
-            "STEP 1 — SCOPE CHECK (human pharmacovigilance only)\n"
-            "────────────────────────────────────────\n"
-            "Is this article within scope for human drug safety?\n"
-            "OUT-OF-SCOPE → write 'NO_DRUG_DATA' immediately if ANY of these apply:\n"
-            "  • Study is conducted exclusively in non-human species (zebrafish, rodent, larvae, in-vitro cells) with no human data\n"
-            "  • Study is about ecotoxicology, environmental contamination, aquatic toxicity, or agricultural/ecological effects\n"
-            "  • Article has no connection to the drug named in the Investigation Context, its generics, its brand names, or its pharmacological class\n"
-            "  • Article is clearly about a different, unrelated drug or a completely unrelated therapeutic area\n"
-            "IN-SCOPE → proceed to Step 2 if the article involves:\n"
-            "  • Human clinical data (trial, cohort, case report, PV database)\n"
-            "  • The investigated drug, its generic/brand equivalent, OR its pharmacological class (e.g., SSRIs when investigating sertraline)\n"
-            "  • A mechanism or drug interaction directly relevant to the investigated drug's safety profile\n\n"
-            "────────────────────────────────────────\n"
-            "STEP 2 — DRUG FOCUS CHECK\n"
-            "────────────────────────────────────────\n"
-            "Is the investigated drug (or its class/generic) a meaningful subject of this article?\n"
-            "  • YES → proceed to Step 3\n"
-            "  • NO (drug is only a passing mention, unrelated comparator, or not present) → write 'NO_DRUG_DATA'\n\n"
-            "────────────────────────────────────────\n"
-            "STEP 3 — WRITE SUMMARY\n"
-            "────────────────────────────────────────\n"
+            "Follow these steps IN ORDER. Stop as soon as a step produces relevant=false.\n\n"
+            "━━━ STEP 1 — ABSOLUTE HUMAN-SCOPE GATE ━━━\n"
+            "This system covers HUMAN pharmacovigilance ONLY (ICH E2D).\n"
+            "Set relevant=false IMMEDIATELY — no exceptions — if ANY of the following is true:\n"
+            "  ✗ The study is conducted in animals (rats, mice, zebrafish, larvae, etc.) or cell lines, even if the drug is the primary subject\n"
+            "  ✗ The study is about ecotoxicology, environmental contamination, aquatic toxicity, or ecological effects\n"
+            "  ✗ No human subjects are involved anywhere in the study\n"
+            "This gate is absolute. Animal study = relevant:false regardless of drug importance.\n\n"
+            "━━━ STEP 2 — DRUG RELEVANCE GATE ━━━\n"
+            "Set relevant=false if:\n"
+            "  ✗ The article has no meaningful connection to the investigated drug, its generics, brand names, or its pharmacological class\n"
+            "  ✗ The drug is only a passing mention or an unrelated comparator with no safety data\n"
+            "  ✗ The article is entirely about a different drug or unrelated therapeutic area\n"
+            "Keep (relevant=true) if the article involves:\n"
+            "  ✓ The investigated drug (or its class/generic) as a meaningful safety subject\n"
+            "  ✓ A drug interaction or mechanism directly relevant to the drug's safety profile\n\n"
+            "━━━ STEP 3 — WRITE SUMMARY (only if relevant=true) ━━━\n"
             "Write a concise analytical summary (2-4 sentences).\n"
-            "Include: study design, population (n=X, age group, setting), key safety finding with effect size and CI if reported, clinical outcome.\n"
-            "Do NOT include the article title or author names.\n"
-            "Derive EXCLUSIVELY from this abstract — never import facts from other articles or prior knowledge.\n"
-            "Report ONLY findings attributable to the investigated drug — ignore other drugs' statistics.\n\n"
-            "Respond with JSON only (no explanation, no markdown fences):\n"
-            '{"summary": "your extraction here"}'
+            "Include: study design, population (n=X, exact age group, setting), key safety finding with effect size and CI if reported, clinical outcome.\n"
+            "Derive EXCLUSIVELY from this abstract — no external knowledge, no other articles.\n"
+            "Report ONLY findings attributable to the investigated drug. Ignore other drugs' statistics.\n\n"
+            "Respond with JSON only (no markdown, no explanation):\n"
+            '{"relevant": true, "summary": "2-4 sentence extraction"}\n'
+            "  — OR —\n"
+            '{"relevant": false, "summary": ""}'
         )
 
         try:
@@ -979,11 +971,11 @@ def _extract_article_summaries(
                     raw = raw[4:].strip()
             extracted = json.loads(raw)
             if isinstance(extracted, dict):
+                keep    = bool(extracted.get("relevant", True))
                 summary = extracted.get("summary", "").strip()
-                if summary and summary != "NO_DRUG_DATA":
+                art["pv_keep"] = keep
+                if keep and summary:
                     art["pv_summary"] = summary
-                elif summary == "NO_DRUG_DATA":
-                    art["pv_summary"] = "NO_DRUG_DATA"   # used by post-Phase-2 filter
         except Exception as exc:
             print(f"[Article summary extraction error — PMID {pmid}] {exc}")
 
