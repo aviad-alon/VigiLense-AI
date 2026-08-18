@@ -1614,17 +1614,23 @@ def generate_pharmacovigilance_report(
         matrix_rows = []
         for ev in discovered_events:
             icon    = _bucket_icon.get(ev.get("bucket", ""), "⬜")
+            _bucket_label = {
+                "confirmed_labeled":     "Established Labeled Event",
+                "severity_discrepancy":  "Label Discrepancy — Elevated Severity",
+                "potentially_unlabeled": "Candidate Unlabeled Signal",
+            }
+            label   = _bucket_label.get(ev.get("bucket", ""), ev.get("bucket", "—"))
             ror_str = str(ev["ror"]) if ev.get("ror") is not None else "—"
             n_str   = str(ev["evidence_count"]) if ev.get("evidence_count") is not None else "—"
             matrix_rows.append(
-                f"| {ev.get('event_name', '—')} | {icon} {ev.get('bucket', '—')} | {n_str} | {ror_str} |"
+                f"| {ev.get('event_name', '—')} | {icon} {label} | {n_str} | {ror_str} |"
             )
         signals_matrix_section = (
             "## Discovered Signals Matrix\n\n"
-            "| Adverse Event | Signal Bucket | Evidence (articles) | FAERS ROR |\n"
+            "| Adverse Event | Classification | Evidence (articles) | FAERS ROR |\n"
             "|---|---|---|---|\n"
             + "\n".join(matrix_rows)
-            + "\n\n> 🟢 confirmed_labeled · 🟡 severity_discrepancy · 🔴 potentially_unlabeled\n\n---\n"
+            + "\n\n> 🟢 Established Labeled Event · 🟡 Label Discrepancy — Elevated Severity · 🔴 Candidate Unlabeled Signal\n\n---\n"
         )
     else:
         signals_matrix_section = ""
