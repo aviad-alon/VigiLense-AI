@@ -326,17 +326,24 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     # Used with PRIORITY over LLM-batch-generated article_summaries.
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
     last_choice = None
+    correction_injected = False  # guard: enforce report tools exactly once if agent stops early
     MAX_ITERATIONS = 20         # allows full investigation + report + submit
 
     for _ in range(MAX_ITERATIONS):
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
+        # After a correction injection, force the LLM to call a tool (cannot write text again)
+        _tool_choice = (
+            {"type": "required"}
+            if correction_injected and report_markdown is None
+            else "auto"
+        )
         try:
             response = llm_client.chat.completions.create(
                 model       = CHAT_MODEL,
                 messages    = messages,
                 tools       = TOOLS,
-                tool_choice = "auto",
+                tool_choice = _tool_choice,
             )
         except openai.RateLimitError as exc:
             print(f"[ReAct loop] OpenAI rate limit — breaking: {exc}")
@@ -356,8 +363,31 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
         last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 
-        # Agent chose to reply with text only (no tool call) — done
+        # Agent chose to reply with text only (no tool call)
         if last_choice.finish_reason == "stop" or not last_choice.message.tool_calls:
+            # If the investigation is underway but report wasn't generated yet,
+            # inject ONE correction and force a tool call on the next iteration.
+            _has_investigated = any(
+                s["module"] not in ("query_knowledge_base", "check_past_signals", "abort_investigation")
+                for s in steps
+            )
+            if (
+                not correction_injected
+                and report_markdown is None
+                and _has_investigated
+                and _ < MAX_ITERATIONS - 2
+            ):
+                correction_injected = True
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "[SYSTEM ENFORCEMENT] You wrote a text response without calling tools. "
+                        "This violates the MANDATORY REPORT TOOL CALL rule. "
+                        "You MUST now call `generate_pharmacovigilance_report` immediately, "
+                        "then call `submit_final_report`. Do NOT write any text — call the tools."
+                    )
+                })
+                continue  # resume the loop with tool_choice="required"
             break
 
         # ── Act: execute every tool the LLM requested ────────────────────────
