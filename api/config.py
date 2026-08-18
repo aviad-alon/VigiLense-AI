@@ -13,17 +13,37 @@ from pinecone import Pinecone
 from supabase import create_client, Client
 
 # ── Model names ───────────────────────────────────────────────────────────────
-CHAT_MODEL     = "NBUECSE-gpt-5-mini"
-EMBED_MODEL    = "NBUECSE-text-embedding-3-small"
+
+# ** LLMod.ai — ORIGINAL (restore before submission) **
+# CHAT_MODEL  = "NBUECSE-gpt-5-mini"
+# EMBED_MODEL = "NBUECSE-text-embedding-3-small"
+
+# TEMPORARY — OpenAI direct (remove before submission)
+CHAT_MODEL  = "gpt-4o-mini"
+EMBED_MODEL = "text-embedding-3-small"
+
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "vigilense")
 
-# ── LLM client (LLMod.ai — OpenAI-compatible) ─────────────────────────────────
+# ── LLM client ────────────────────────────────────────────────────────────────
+
+# ** LLMod.ai — ORIGINAL (restore before submission) **
+# llm_client = None
+# _api_key   = os.getenv("OPENAI_API_KEY")
+# if _api_key:
+#     llm_client = OpenAI(
+#         api_key  = _api_key,
+#         base_url = os.getenv("OPENAI_BASE_URL", "https://api.llmod.ai"),
+#         timeout  = 90.0,
+#     )
+
+# TEMPORARY — OpenAI direct (remove before submission)
 llm_client = None
-_api_key   = os.getenv("OPENAI_API_KEY")
+_api_key   = os.getenv("OPENAI_API_KEY_TEMP")
 if _api_key:
     llm_client = OpenAI(
         api_key  = _api_key,
-        base_url = os.getenv("OPENAI_BASE_URL", "https://api.llmod.ai"),
+        base_url = "https://api.openai.com/v1",
+        timeout  = 90.0,
     )
 
 # ── Pinecone client ───────────────────────────────────────────────────────────
