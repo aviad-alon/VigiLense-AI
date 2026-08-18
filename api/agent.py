@@ -300,13 +300,18 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 - [What the KB/label already documents about the investigated AE or adjacent organ system findings. Reference specific label sections. Do NOT list unrelated safety categories.]
 
 ### Novel Findings
-- [Literature findings NOT present in FDA label. Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations. Only use PMIDs returned by PubMed tools.]
+**MANDATORY:** Go through EVERY article in the Literature section above. For each article, determine:
+  (a) Is this finding documented in the FDA label / KB? → goes to Known/Expected Findings below.
+  (b) Is this finding NOT in the label, or extends it with new population/mechanism/severity data? → include here as a Novel Finding.
+Do NOT skip articles. Do NOT collapse distinct findings into a single bullet. Each meaningful novel finding gets its own bullet.
+You MAY cross-reference articles that support the same signal (e.g., "Two case reports [PMID: X] [PMID: Y] both document...").
+Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 
 ### Known / Expected Findings
-- [Label-consistent findings related to the investigated AE. Only include findings whose AE category matches the investigation scope.]
+- [Label-consistent findings only — adverse events already documented in the FDA label for this drug. Keep brief.]
 
 ### Signal Assessment
-- [Evidence quality, disproportionality strength (if available), and final signal confidence — scoped exclusively to the investigated AE.]
+- [Synthesize the overall evidence: number of novel signals found, clinical severity, convergence across multiple articles, disproportionality strength if available. Write 3-5 sentences — this is your expert judgment, not a list.]
 ```
 
 ---
