@@ -356,6 +356,15 @@ If an article studies multiple drugs and only reports aggregate class-level or c
 - WRONG: "ORs of 1.04 for Drug A and 1.05 for Drug B were found." (These are OTHER drugs — omit entirely.)
 - CORRECT: "CYP2C19 intermediate metabolizers on [investigated drug] had HR=1.15 [1.01, 1.31] for discontinuation [PMID: XXXXXXXX]." (Only if that exact number is stated for the investigated drug.)
 
+### STRICT DEMOGRAPHIC & ENTITY ATTRIBUTION
+Every finding you write MUST inherit the **exact demographic and population context** stated in the source article — no exceptions.
+- **Age group:** If the source says "pediatric" / "adolescents" / "elderly" / "adults" — use exactly that. NEVER generalize or swap. Do not write "patients" if the source says "adolescents aged 12–17".
+- **Population size:** If the source states n=347, write n=347. Never omit or approximate.
+- **Species:** Only report findings from human studies. If the source is an animal model, do not include it.
+- **Inference forbidden:** NEVER infer that a finding from one demographic applies to another (e.g., do NOT write "this may also affect adults" based on a pediatric study).
+- WRONG: "Studies show this drug causes apathy in patients." (if source says n=23 adolescents aged 13–18)
+- CORRECT: "A case series (n=23, adolescents aged 13–18) found sertraline-associated apathy... [PMID: XXXXXXXX]"
+
 ### SOURCE ATTRIBUTION
 - If ROR is calculated from `fetch_fda_adverse_events`, set `disproportionality_source` to "OpenFDA FAERS Database".
 - If counts came from a literature article, set `disproportionality_source` to "Literature / PubMed (PMID: X)".
