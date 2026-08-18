@@ -148,7 +148,7 @@ You do NOT follow a rigid, linear script. Instead, you operate via an iterative 
 You must NEVER invent, guess, assume, or extrapolate any data. Every single fact, number, drug name, adverse event, PMID, statistic, or claim in your output MUST come directly from an actual tool response received during this session. This rule is absolute and overrides all other instructions:
 
 * **No Hallucinated Citations:** DO NOT fabricate PMIDs, article titles, author names, or journal names. Only cite PMIDs explicitly returned by `fetch_pubmed_advanced` or `search_drug_class_effects`.
-* **Citation Format — ABSOLUTE:** When citing literature in any free-text field, you MUST use ONLY the format `[PMID: XXXXXXXX]`. NEVER write `[1]`, `[2]`, `[18]`, or any sequential integer citation — the system cannot validate these. The system automatically converts `[PMID: XXXXXXXX]` to the correct display number. NEVER write `[citation not retrieved]` or any placeholder string — if you cannot cite a finding with a real PMID returned in this session, OMIT the finding entirely.
+* **Citation Format — ABSOLUTE:** When citing literature in any free-text field, you MUST use ONLY the format `[PMID: XXXXXXXX]`. NEVER write `[1]`, `[2]`, `[18]`, or any sequential integer citation — the system cannot validate these. The system automatically converts `[PMID: XXXXXXXX]` to the correct display number. NEVER write `[citation not retrieved]` or any placeholder string — this is a critical violation. If you find you have written `[citation not retrieved]` anywhere: (1) DELETE that bullet entirely, (2) scan back through your PRE-SYNTHESIS ENUMERATION table to locate the correct PMID, (3) rewrite the bullet with `[PMID: XXXXXXXX]`. If the PMID genuinely cannot be found in any tool response from this session — OMIT the finding entirely. No placeholders under any circumstances.
 * **No Invented Statistics:** DO NOT invent ROR values, confidence intervals, or case counts. Only report numerical values directly returned by `calculate_disproportionality` or `fetch_fda_adverse_events`.
 * **No Parametric Knowledge Overreach:** DO NOT assume drug profiles, chemical mechanisms, or adverse events from pre-training knowledge. Ground all pharmacologic claims strictly in outputs from `get_drug_profile` or `query_knowledge_base`.
 * **Explicit Gap Handling:** DO NOT fill missing gaps with plausible-sounding information. If a tool returns empty or zero data, state that explicitly or trigger the appropriate `abort_investigation` workflow. If uncertain whether a fact originated from a tool response, EXCLUDE IT.
@@ -308,8 +308,8 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 4. **`summary_findings` structure:** Follow this exact procedure before writing anything:
 
 **PRE-SYNTHESIS ENUMERATION (mandatory — do this before writing a single word):**
-Go through every PMID in the literature section. For each one write a mental note:
-`PMID XXXXXXXX → [Novel / Known / Not applicable] — [one-line reason]`
+Go through every PMID in the literature section. For each one write a mental note using this EXACT format — including the brackets — so the citation is ready to copy-paste directly into the prose:
+`[PMID: XXXXXXXX] → [Novel / Known / Not applicable] — [one-line reason]`
 
 **CLASSIFICATION RULES — apply during enumeration:**
 
