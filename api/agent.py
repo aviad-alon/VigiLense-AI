@@ -355,28 +355,28 @@ STRICT ISOLATED EXTRACTION: Every relevance_summary derives SOLELY from that art
 SELF-CHECK: Confirm no summary contains facts from a different PMID before submitting.
 DEDUPLICATION: Duplicate = identical PMID or identical title only. Different papers on the same topic are NOT duplicates. Never write "(Duplicate...)" in any relevance_summary.
 
-`summary_findings` STRUCTURE — THREE sections, strictly non-redundant:
+`summary_findings` — THREE SIMPLE SECTIONS:
 
-⛔ ANTI-REDUNDANCY RULE (enforced across all three sections):
-- Each safety fact appears at most ONCE. Do not restate the same event or finding in multiple sections.
-- Do not repeat article content from the Literature section — cite by [N] number only.
-- Do not echo Signal Conclusion content back into Label Safety Baseline or vice versa.
+⚠️ ARTICLE-ONLY RULE: Base the entire analysis exclusively on the retrieved articles. Do NOT add information from outside the articles. Cite every finding with [N].
+⛔ DRUG ISOLATION RULE: Every sentence must refer only to the drug in `drug_name`. Never mention another drug.
 
-EMPTY-STATE RULE: If no literature was retrieved AND no novel FAERS signal exists, write one concise paragraph under "### Label Safety Baseline" only. Skip the other two sections entirely — do NOT write "no findings" under multiple headings.
+### Overall Evidence Picture
+1–3 sentences summarizing what the totality of retrieved articles shows collectively.
+State the main direction clearly (e.g., "Most studies show that Metformin reduces cancer risk, though a few identify elevated risk in specific subgroups").
+If no articles were retrieved, write one sentence stating that and stop — skip the other sections.
 
-SCOPE RULE:
-- Targeted Mode: every bullet concerns the investigated AE or adjacent organ-system findings only. Exclude unrelated categories even if they appear in the label.
-- Broad Surveillance Mode: cover ALL discovered AEs. The discovered_events matrix handles the summary table; summary_findings provides narrative context per classification tier.
+### Findings Breakdown
+Two optional sub-bullets — include only those that apply:
+- **Protective / risk-reducing findings:** list AEs or outcomes where studies show reduced risk or protective effect, with [N] citations.
+- **Risk / adverse findings:** list AEs or outcomes where studies show increased risk or harm, with [N] citations.
+Omit a sub-bullet entirely if no findings of that type exist. Do not write "none" — just skip it.
 
-### Label Safety Baseline
-What the FDA label covers for this drug/AE: named AEs, class-level statements (e.g., "label covers all NSAIDs as a class — all are Established Labeled Events"), and mechanism-based warnings. Include Bucket 2 severity discrepancies here — note explicitly as "Label Discrepancy — Elevated Severity". ≤5 bullets, most clinically relevant only. Write ALL label/baseline content HERE — do not repeat it in the sections below.
-
-### Novel Signal Assessment
-Candidate Unlabeled Signals (Bucket 3) ONLY — AEs absent from the label by name AND not covered by any class or mechanism statement. Each bullet cites [PMID: XXXXXXXX] (auto-converted to [N]) or FAERS ROR.
-IF NONE EXIST: write exactly one sentence — "No candidate unlabeled signals identified — all findings are consistent with the established safety profile." Then stop — no additional bullets.
-
-### Evidence Quality & Signal Conclusion
-≤3 bullets: ROR + FAERS demographics if available, evidence quality grade, final classification sentence (e.g., "Established Labeled Event — no escalation required"). Cross-reference the Literature section by [N] citation only — do NOT restate article content already shown above.
+### Bottom Line
+One direct sentence: is there a net safety concern or not?
+- If the dominant finding is protective and there is no clear overall risk → state that no safety escalation is needed.
+- If there is a genuine risk signal → state what is concerning and why.
+- If evidence is mixed → briefly describe the split and state which element (if any) warrants follow-up.
+No regulatory jargon. Speak plainly.
 
 SOURCE ATTRIBUTION: disproportionality_source = "OpenFDA FAERS Database" or "Literature / PubMed (PMID: X)".
 
