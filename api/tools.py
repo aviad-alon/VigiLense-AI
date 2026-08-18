@@ -495,6 +495,49 @@ TOOLS = [
                             "c": {"type": "integer", "description": "Other drugs + target AE cases"},
                             "d": {"type": "integer", "description": "Background: other drugs + other AEs"}
                         }
+                    },
+                    "surveillance_mode": {
+                        "type": "boolean",
+                        "description": (
+                            "Set to true for Broad Surveillance Mode (no specific AE focus was given). "
+                            "Triggers the Discovered Signals Matrix rendering in the report. "
+                            "Omit or set false for Targeted Mode."
+                        )
+                    },
+                    "discovered_events": {
+                        "type": "array",
+                        "description": (
+                            "Broad Surveillance Mode only. List ALL adverse events discovered across the "
+                            "retrieved literature, each with its 3-bucket classification. "
+                            "One entry per unique AE. Include ROR only for Bucket 3 events where FAERS was queried."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "event_name": {
+                                    "type": "string",
+                                    "description": "Name of the discovered adverse event (e.g. 'Intracranial hemorrhage')."
+                                },
+                                "bucket": {
+                                    "type": "string",
+                                    "enum": [
+                                        "confirmed_labeled",
+                                        "severity_discrepancy",
+                                        "potentially_unlabeled"
+                                    ],
+                                    "description": "3-bucket classification result for this AE."
+                                },
+                                "evidence_count": {
+                                    "type": "integer",
+                                    "description": "Number of included articles reporting this AE."
+                                },
+                                "ror": {
+                                    "type": "number",
+                                    "description": "ROR from FAERS if queried for this event (Bucket 3 only). Omit if not queried."
+                                }
+                            },
+                            "required": ["event_name", "bucket"]
+                        }
                     }
                 },
                 "required": [
@@ -1470,6 +1513,8 @@ def generate_pharmacovigilance_report(
     literature_section: str | None = None,    # Python-injected by agent.py — NOT from LLM
     case_counts: dict | None = None,          # raw 2×2 a/b/c/d values for transparent reporting
     signal_level: str | None = None,          # composite: "none" | "potential" | "significant"
+    surveillance_mode: bool = False,          # True → Broad Surveillance Mode
+    discovered_events: list | None = None,    # Broad Mode: list of {event_name, bucket, evidence_count, ror}
 ) -> dict:
     """
     Generate a standardized Pharmacovigilance Evaluation Report in Markdown.
@@ -1477,9 +1522,10 @@ def generate_pharmacovigilance_report(
 
     signal_level drives the master header and Subject table:
       "significant" → 🔴  (FAERS ROR threshold met)
-      "potential"   → 🟡  (FAERS negative but novel Tier 1 literature found)
+      "potential"   → 🟡  (FAERS negative but novel Bucket 3 literature found)
       "none" / None → 🟢  (both sources show no signal)
 
+    surveillance_mode=True adds a Discovered Signals Matrix section above Agent Analysis.
     is_significant is used exclusively for the FAERS statistics sub-section.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -1558,6 +1604,31 @@ def generate_pharmacovigilance_report(
             "literature, and no usable data was available from OpenFDA FAERS for this drug-event pair.\n"
         )
 
+    # ── Discovered Signals Matrix (Broad Surveillance Mode only) ─────────────
+    if surveillance_mode and discovered_events:
+        _bucket_icon = {
+            "confirmed_labeled":    "🟢",
+            "severity_discrepancy": "🟡",
+            "potentially_unlabeled":"🔴",
+        }
+        matrix_rows = []
+        for ev in discovered_events:
+            icon    = _bucket_icon.get(ev.get("bucket", ""), "⬜")
+            ror_str = str(ev["ror"]) if ev.get("ror") is not None else "—"
+            n_str   = str(ev["evidence_count"]) if ev.get("evidence_count") is not None else "—"
+            matrix_rows.append(
+                f"| {ev.get('event_name', '—')} | {icon} {ev.get('bucket', '—')} | {n_str} | {ror_str} |"
+            )
+        signals_matrix_section = (
+            "## Discovered Signals Matrix\n\n"
+            "| Adverse Event | Signal Bucket | Evidence (articles) | FAERS ROR |\n"
+            "|---|---|---|---|\n"
+            + "\n".join(matrix_rows)
+            + "\n\n> 🟢 confirmed_labeled · 🟡 severity_discrepancy · 🔴 potentially_unlabeled\n\n---\n"
+        )
+    else:
+        signals_matrix_section = ""
+
     report_markdown = f"""# VigiLenseAI — Pharmacovigilance Evaluation Report
 
 **Report Date:** {generated_at}
@@ -1577,7 +1648,7 @@ def generate_pharmacovigilance_report(
 
 ---
 
-{stats_section}
+{signals_matrix_section}{stats_section}
 ---
 
 ## Literature Retrieved from PubMed
@@ -1661,7 +1732,8 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
         return generate_pharmacovigilance_report(**_filter(fn_args, {
             "drug_name", "adverse_event", "is_significant", "signal_level",
             "summary_findings", "recommendations", "ror", "ci_95",
-            "disproportionality_source", "literature_section", "case_counts"
+            "disproportionality_source", "literature_section", "case_counts",
+            "surveillance_mode", "discovered_events",
         }))
     if fn_name == "submit_final_report":
         return submit_final_report(**_filter(fn_args, {
