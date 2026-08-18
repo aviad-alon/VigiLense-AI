@@ -450,6 +450,9 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             break
 
         # ── Act: execute every tool the LLM requested ────────────────────────
+        _TERMINAL_TOOLS = {"generate_pharmacovigilance_report", "submit_final_report", "abort_investigation"}
+        pending_guard_messages: list[str] = []   # collected after all tool results are appended
+
         for tool_call in last_choice.message.tool_calls:
             fn_name = tool_call.function.name
             fn_args = json.loads(tool_call.function.arguments)
@@ -504,21 +507,17 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             if fn_name == "generate_pharmacovigilance_report":
                 report_markdown = result.get("report_markdown")
 
-            # ── Loop guard: inject system message if same tool called too many times ──
-            _TERMINAL_TOOLS = {"generate_pharmacovigilance_report", "submit_final_report", "abort_investigation"}
+            # ── Loop guard: count calls, schedule guard message for after tool results ──
             if fn_name not in _TERMINAL_TOOLS:
                 tool_call_counts[fn_name] = tool_call_counts.get(fn_name, 0) + 1
                 if tool_call_counts[fn_name] >= 3:
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[SYSTEM — LOOP GUARD] You have called `{fn_name}` "
-                            f"{tool_call_counts[fn_name]} times with diminishing returns. "
-                            "Do NOT call it again. You have sufficient evidence gathered so far. "
-                            "Proceed IMMEDIATELY to `generate_pharmacovigilance_report` "
-                            "to synthesize and finalize the investigation report."
-                        ),
-                    })
+                    pending_guard_messages.append(
+                        f"[SYSTEM — LOOP GUARD] You have called `{fn_name}` "
+                        f"{tool_call_counts[fn_name]} times with diminishing returns. "
+                        "Do NOT call it again. You have sufficient evidence gathered so far. "
+                        "Proceed IMMEDIATELY to `generate_pharmacovigilance_report` "
+                        "to synthesize and finalize the investigation report."
+                    )
 
             # Record step for the UI execution trace
             steps.append({
@@ -548,6 +547,11 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     "reasoning":             fn_args.get("reason", "Investigation aborted."),
                     "recommended_action":    "Discard - No Novel Signal",
                 }
+
+        # ── Inject loop guard messages AFTER all tool results have been appended ──
+        # (OpenAI requires: assistant turn → all tool results → then any user message)
+        for guard_msg in pending_guard_messages:
+            messages.append({"role": "user", "content": guard_msg})
 
         if final_report:
             break
