@@ -955,12 +955,14 @@ def _screen_articles_llm(
     for batch_start in range(0, len(articles), SCREENING_BATCH_SIZE):
         batch = articles[batch_start : batch_start + SCREENING_BATCH_SIZE]
 
+        # Phase 1 abstract limit: 2,500 chars captures BACKGROUND + METHODS + RESULTS + CONCLUSIONS
+        # for virtually all structured abstracts (avg ~1,800 chars), while preventing
+        # runaway token costs on rare verbosely-formatted multi-section abstracts.
+        PHASE1_ABSTRACT_CHARS = 2500
+
         articles_block = ""
         for idx, art in enumerate(batch, 1):
-            # Full abstract — not truncated. RESULTS and CONCLUSION sections
-            # (where AE counts, outcomes, and dosages live) must be visible
-            # to Phase 1 to avoid false-negative exclusions.
-            abstract_text = (art.get("abstract") or "")
+            abstract_text = (art.get("abstract") or "")[:PHASE1_ABSTRACT_CHARS]
             articles_block += (
                 f"\n[{idx}] PMID: {art.get('pmid', 'N/A')}\n"
                 f"Title: {art.get('title', '')}\n"
@@ -1334,6 +1336,14 @@ def fetch_pubmed_advanced(
         articles, audit = _pubmed_fetch(effective_query, fetch_limit, effective_min_year, sort_order)
         audit["query_enriched"] = effective_query != query_term  # flag for transparency
 
+        # Fallback: if PT-filtered query yields zero results, retry without filters.
+        # Prevents "no results" collapses when the drug-AE combination has few indexed
+        # clinical publications and PT filters are too restrictive for a niche query.
+        if not articles and effective_query != query_term:
+            articles, audit = _pubmed_fetch(query_term, fetch_limit, effective_min_year, sort_order)
+            audit["query_enriched"]     = False
+            audit["pt_filter_fallback"] = True
+
         if investigation_context and articles:
             articles = _screen_articles_llm(articles, investigation_context, surveillance_mode)
             audit["total_relevant"] = len(articles)
@@ -1371,6 +1381,12 @@ def search_drug_class_effects(
         effective_term = _add_pt_filters(term) if investigation_context else term
         articles, audit = _pubmed_fetch(effective_term, fetch_limit, min_year)
         audit["query_enriched"] = effective_term != term
+
+        # Fallback: retry without PT filters if enriched query returns nothing.
+        if not articles and effective_term != term:
+            articles, audit = _pubmed_fetch(term, fetch_limit, min_year)
+            audit["query_enriched"]     = False
+            audit["pt_filter_fallback"] = True
 
         if investigation_context and articles:
             articles = _screen_articles_llm(articles, investigation_context)
