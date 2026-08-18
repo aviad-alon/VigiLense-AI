@@ -363,28 +363,31 @@ STRICT ISOLATED EXTRACTION: Every relevance_summary derives SOLELY from that art
 SELF-CHECK: Confirm no summary contains facts from a different PMID before submitting.
 DEDUPLICATION: Duplicate = identical PMID or identical title only. Different papers on the same topic are NOT duplicates. Never write "(Duplicate...)" in any relevance_summary.
 
-`summary_findings` — THREE SIMPLE SECTIONS:
+`summary_findings` — DETAILED RESEARCH ANALYSIS:
 
-⚠️ ARTICLE-ONLY RULE: Base the entire analysis exclusively on the retrieved articles. Do NOT add information from outside the articles. Cite every finding with [N].
-⛔ DRUG ISOLATION RULE: Every sentence must refer only to the drug in `drug_name`. Never mention another drug.
+⚠️ ARTICLE-ONLY RULE: Every claim must be grounded in a specific retrieved article. Cite using [N] inline. Do NOT add information from outside the articles.
+⛔ DRUG ISOLATION RULE: Every sentence refers only to the drug in `drug_name`. Never mention another drug.
+⚠️ COVERAGE RULE: Every included article must be cited at least once by [N]. A summary that skips articles is incomplete.
+⚠️ LENGTH RULE: This is the core output of the investigation. Generic sentences without [N] citations and specific effect sizes are not acceptable.
 
-### Overall Evidence Picture
-1–3 sentences summarizing what the totality of retrieved articles shows collectively.
-State the main direction clearly (e.g., "Most studies show that Metformin reduces cancer risk, though a few identify elevated risk in specific subgroups").
-If no articles were retrieved, write one sentence stating that and stop — skip the other sections.
+### Evidence Overview
+2–3 sentences: how many articles were included, what outcomes they examined, and the dominant direction of evidence. Be specific (e.g., "14 of 16 articles reported protective associations across cancer, cardiovascular, and metabolic outcomes").
 
-### Findings Breakdown
-Two optional sub-bullets — include only those that apply:
-- **Protective / risk-reducing findings:** list AEs or outcomes where studies show reduced risk or protective effect, with [N] citations.
-- **Risk / adverse findings:** list AEs or outcomes where studies show increased risk or harm, with [N] citations.
-Omit a sub-bullet entirely if no findings of that type exist. Do not write "none" — just skip it.
+### Detailed Findings
+Group articles by outcome category. For each category, use a bold header (e.g., **Cancer — Hepatocellular Carcinoma**) and then discuss every article in that group:
+- Cite [N], state study design, population size, key effect size with CI, and the clinical conclusion in 1–2 sentences.
+- Every [N] from the Literature section must appear here at least once.
+- If two articles cover the same outcome, compare their findings directly.
+
+### Conflicting or Risk Findings
+Only if any articles showed increased risk or harm: discuss here with [N] citations and effect sizes. Omit entirely if none — do NOT write "none found."
 
 ### Bottom Line
-One direct sentence: is there a net safety concern or not?
-- If the dominant finding is protective and there is no clear overall risk → state that no safety escalation is needed.
-- If there is a genuine risk signal → state what is concerning and why.
-- If evidence is mixed → briefly describe the split and state which element (if any) warrants follow-up.
-No regulatory jargon. Speak plainly.
+2–3 sentences. Based on the weighted evidence:
+- State the dominant finding clearly.
+- If there is a net safety concern → say what and why.
+- If the dominant finding is protective with no overall risk → state that no safety escalation is warranted.
+Write as if explaining to a senior clinician. No jargon.
 
 SOURCE ATTRIBUTION: disproportionality_source = "OpenFDA FAERS Database" or "Literature / PubMed (PMID: X)".
 
