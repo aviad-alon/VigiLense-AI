@@ -368,6 +368,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     last_choice = None
     correction_injected = False  # guard: enforce report tools exactly once if agent stops early
     MAX_ITERATIONS = 20         # allows full investigation + report + submit
+    # ── FAERS ROR tracking (Fix: bind calculate_disproportionality → discovered_events) ──
+    # faers_pending: maps (a, b, c, d) tuple → ae_name for each fetch_fda_adverse_events result.
+    # The LLM copies those same counts verbatim into calculate_disproportionality args,
+    # so the tuple is a reliable fingerprint linking the two calls.
+    faers_pending:  dict[tuple, str]  = {}   # (a,b,c,d) → ae_name
+    faers_ror_cache: dict[str, dict]  = {}   # ae_name.lower() → {ror, ci_95, faers_significant}
 
     for _ in range(MAX_ITERATIONS):
 
@@ -457,10 +463,59 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                         fn_args["summary_findings"], pmid_to_number, valid_pmids
                     )
 
+                # ── Inject tracked FAERS RORs into discovered_events ─────────────
+                # The LLM often forgets to carry ror/ci_95/faers_significant from
+                # calculate_disproportionality back into the discovered_events entries.
+                # Python tracked every (fetch_fda_adverse_events → calculate_disproportionality)
+                # chain, so we can fill the gaps deterministically here.
+                if faers_ror_cache:
+                    for ev in (fn_args.get("discovered_events") or []):
+                        ae_key = ev.get("event_name", "").lower().strip()
+                        if not ae_key or ev.get("ror") is not None:
+                            continue  # already populated — skip
+                        match = faers_ror_cache.get(ae_key)
+                        if not match:
+                            # Fuzzy fallback: substring match handles minor term differences
+                            for k, v in faers_ror_cache.items():
+                                if k in ae_key or ae_key in k:
+                                    match = v
+                                    break
+                        if match:
+                            ev["ror"]               = match["ror"]
+                            ev["ci_95"]             = match["ci_95"]
+                            ev["faers_significant"] = match["faers_significant"]
+
             try:
                 result = dispatch(fn_name, fn_args)
             except Exception as exc:
                 result = {"error": f"Tool execution failed: {exc}"}
+
+            # ── Post-dispatch FAERS ROR tracking ─────────────────────────────────
+            # Record fetch_fda_adverse_events result: map (a,b,c,d) → ae_name so
+            # we can link it to the subsequent calculate_disproportionality call.
+            if fn_name == "fetch_fda_adverse_events" and not result.get("error"):
+                a = result.get("a")
+                b = result.get("b")
+                c = result.get("c")
+                d = result.get("d")
+                ae = fn_args.get("adverse_event", "").lower().strip()
+                if all(v is not None for v in (a, b, c, d)) and ae:
+                    faers_pending[(a, b, c, d)] = ae
+
+            # Resolve calculate_disproportionality back to ae_name via the fingerprint.
+            if fn_name == "calculate_disproportionality" and not result.get("error"):
+                a = fn_args.get("cases_drug_event")
+                b = fn_args.get("cases_drug_other")
+                c = fn_args.get("cases_other_event")
+                d = fn_args.get("cases_other_other")
+                ae_name = faers_pending.pop((a, b, c, d), None)
+                ror_val = result.get("ror")
+                if ae_name and ror_val is not None:
+                    faers_ror_cache[ae_name] = {
+                        "ror":               ror_val,
+                        "ci_95":             result.get("ci_95"),
+                        "faers_significant": bool(result.get("statistically_significant")),
+                    }
 
             # ── Collect real articles + audit from PubMed tool results ──────────
             if fn_name in ("fetch_pubmed_advanced", "search_drug_class_effects"):
