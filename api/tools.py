@@ -951,6 +951,12 @@ def _extract_article_summaries(
             "Include: study design, population (n=X, exact age group, setting), key safety finding with effect size and CI if reported, clinical outcome.\n"
             "Derive EXCLUSIVELY from this abstract — no external knowledge, no other articles.\n"
             "Report ONLY findings attributable to the investigated drug. Ignore other drugs' statistics.\n\n"
+            "CONFOUNDING BY INDICATION CHECK: If this is an observational study (cohort, retrospective, cross-sectional) "
+            "and the reported association could plausibly reflect that the drug was prescribed BECAUSE patients already had "
+            "the condition being measured as an outcome (e.g., sertraline prescribed to depressed patients, then 'associated' "
+            "with depression) — append to the summary: "
+            "'NOTE: Confounding by indication likely — [drug] was prescribed to patients with pre-existing [condition]; "
+            "this association may not represent a drug-caused effect.'\n\n"
             "Respond with JSON only (no markdown, no explanation):\n"
             '{"relevant": true, "summary": "2-4 sentence extraction"}\n'
             "  — OR —\n"

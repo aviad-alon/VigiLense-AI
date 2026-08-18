@@ -306,8 +306,13 @@ You MUST do this for ALL PMIDs. Only after completing this list may you write th
 
 ### Novel Findings
 Every PMID you classified as "Novel" above MUST appear here as its own bullet — no exceptions, no omissions.
+ALWAYS classify as Novel (regardless of article type) if:
+- The finding describes an adverse event or syndrome NOT documented in the FDA label for this drug
+- The article identifies this drug as the ONLY member of its class associated with a specific AE (class differentiator)
+- The finding extends label data with a new severity, population, or mechanism (e.g., pediatric data where label only covers adults)
 You MAY cross-reference PMIDs that converge on the same signal (e.g., "Two independent case reports [PMID: X] [PMID: Y] both document...").
 Prioritise by clinical severity (life-threatening first, then serious, then mild).
+If a Key Finding contains "NOTE: Confounding by indication likely" — include the finding but label it explicitly: "(Confounding by indication possible — interpret with caution)".
 Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 
 ### Known / Expected Findings
