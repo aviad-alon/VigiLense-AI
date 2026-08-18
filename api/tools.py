@@ -21,9 +21,12 @@ Tools:
 import json
 import math
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import requests
 from config import llm_client, pc, supabase, EMBED_MODEL, PINECONE_INDEX, CHAT_MODEL
+
+MAX_PHASE2_WORKERS = 5  # parallel LLM calls for Phase 2 gate (conservative to avoid 429s)
 
 OPENFDA_LABEL_URL  = "https://api.fda.gov/drug/label.json"
 OPENFDA_FAERS_URL  = "https://api.fda.gov/drug/event.json"
@@ -919,17 +922,106 @@ def _screen_articles_llm(
     return [a for a in relevant if a.get("pv_include") is True]
 
 
+def _gate_single_article(art: dict, investigation_context: str) -> None:
+    """
+    Gate and summarize ONE article via a single isolated LLM call.
+
+    Writes results directly onto the article dict:
+        art["pv_include"]   — True / False
+        art["pv_summary"]   — extraction (included articles only)
+        art["pv_study_type"] — study design (included articles only)
+
+    Thread-safe: each call operates on a distinct article dict.
+    Fails-open on any error so no signal is silently dropped.
+    """
+    pmid     = art.get("pmid", "")
+    title    = art.get("title", "Unknown title")
+    abstract = (art.get("abstract") or "")[:2000]
+
+    prompt = (
+        "You are a Pharmacovigilance Literature Analyst.\n\n"
+        f"Investigation Context:\n{investigation_context}\n\n"
+        "Review the SINGLE article below and decide:\n"
+        "  — INCLUDE (include: true) if it contains DIRECT patient-level evidence "
+        "of the investigated adverse event:\n"
+        "      • A case report or case series with actual patient occurrences.\n"
+        "      • A clinical trial or observational cohort reporting AE incidence or risk.\n"
+        "      • A pharmacovigilance database study (FAERS, VigiBase) with case counts.\n"
+        "  — EXCLUDE (include: false) if it is:\n"
+        "      • A narrative review, meta-analysis, or editorial with no original case data.\n"
+        "      • A mechanistic, animal, or in-vitro study.\n"
+        "      • A PK/PD study not reporting the target AE in patients.\n"
+        "      • A study explicitly concluding the AE did not occur.\n\n"
+        "IF EXCLUDED → respond with ONLY: {\"include\": false}\n"
+        "Do NOT write a summary for excluded articles.\n\n"
+        "IF INCLUDED → respond with:\n"
+        "{\"include\": true, \"summary\": \"<your summary here>\", \"study_type\": \"<design>\"}\n\n"
+        "STUDY TYPE OPTIONS (choose the most specific that applies):\n"
+        "  'Systematic Review / Meta-Analysis', 'RCT', 'Cohort Study', 'Case-Control Study',\n"
+        "  'Case Report / Case Series', 'Pharmacovigilance DB Study', 'Other'\n\n"
+        "SUMMARY REQUIREMENTS (included articles only):\n"
+        "  - 1-3 sentences capturing the key findings that will appear in the final "
+        "pharmacovigilance report.\n"
+        "  - Include: patient count (n=X), relevant demographics if stated, "
+        "dose/timing if known, clinical outcome.\n"
+        "  - Example: 'Case series (n=3, males 45-62 yrs): drug 50-100 mg associated "
+        "with AE onset within 24h; partial recovery in 2/3 cases.'\n\n"
+        "=== CRITICAL ISOLATION RULE ===\n"
+        "Your decision and summary must be derived EXCLUSIVELY from the single abstract below.\n"
+        "NEVER include information from any other source, memory, or prior article.\n"
+        "SELF-CHECK before responding: 'Does my summary contain ANY fact not present "
+        "verbatim in the abstract below?' If yes — remove it.\n"
+        "================================\n\n"
+        f"=== ARTICLE | PMID: {pmid} ===\n"
+        f"Title: {title}\n"
+        f"Abstract: {abstract}\n"
+        f"=== END ARTICLE | PMID: {pmid} ===\n\n"
+        "Respond with JSON only (no explanation, no markdown fences)."
+    )
+
+    try:
+        resp = llm_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:].strip()
+        extracted = json.loads(raw)
+        if isinstance(extracted, dict):
+            include = extracted.get("include")
+            if include is True:
+                art["pv_include"] = True
+                summary = extracted.get("summary", "")
+                if isinstance(summary, str) and summary.strip():
+                    art["pv_summary"] = summary.strip()
+                study_type = extracted.get("study_type", "")
+                if isinstance(study_type, str) and study_type.strip():
+                    art["pv_study_type"] = study_type.strip()
+            else:
+                art["pv_include"] = False
+    except Exception as exc:
+        print(f"[Article gate error — PMID {pmid}] {exc}")
+        art["pv_include"] = True  # fail-open: include so no signal is silently dropped
+
+
 def _extract_article_summaries(
     articles: list[dict],
     investigation_context: str,
 ) -> None:
     """
-    Gate and summarize each article INDIVIDUALLY.
+    Gate and summarize each article INDIVIDUALLY via parallel LLM calls.
 
-    One LLM call per article — the model sees ONLY that article's abstract,
-    title, and PMID. Structural isolation makes cross-contamination impossible.
+    Uses ThreadPoolExecutor (MAX_PHASE2_WORKERS workers) to run _gate_single_article
+    concurrently — reduces Phase 2 latency from ~150s (serial) to ~30s (parallel).
 
-    Decision:
+    Each article is processed in an isolated LLM call — structural isolation makes
+    cross-contamination impossible regardless of parallelism.
+
+    Decision written onto each art dict:
         include=false → art["pv_include"] = False, no summary generated.
         include=true  → art["pv_include"] = True, art["pv_summary"] set.
 
@@ -938,80 +1030,18 @@ def _extract_article_summaries(
     if not articles or not llm_client:
         return
 
-    for art in articles:
-        pmid     = art.get("pmid", "")
-        title    = art.get("title", "Unknown title")
-        abstract = (art.get("abstract") or "")[:2000]
-
-        prompt = (
-            "You are a Pharmacovigilance Literature Analyst.\n\n"
-            f"Investigation Context:\n{investigation_context}\n\n"
-            "Review the SINGLE article below and decide:\n"
-            "  — INCLUDE (include: true) if it contains DIRECT patient-level evidence "
-            "of the investigated adverse event:\n"
-            "      • A case report or case series with actual patient occurrences.\n"
-            "      • A clinical trial or observational cohort reporting AE incidence or risk.\n"
-            "      • A pharmacovigilance database study (FAERS, VigiBase) with case counts.\n"
-            "  — EXCLUDE (include: false) if it is:\n"
-            "      • A narrative review, meta-analysis, or editorial with no original case data.\n"
-            "      • A mechanistic, animal, or in-vitro study.\n"
-            "      • A PK/PD study not reporting the target AE in patients.\n"
-            "      • A study explicitly concluding the AE did not occur.\n\n"
-            "IF EXCLUDED → respond with ONLY: {\"include\": false}\n"
-            "Do NOT write a summary for excluded articles.\n\n"
-            "IF INCLUDED → respond with:\n"
-            "{\"include\": true, \"summary\": \"<your summary here>\", \"study_type\": \"<design>\"}\n\n"
-            "STUDY TYPE OPTIONS (choose the most specific that applies):\n"
-            "  'Systematic Review / Meta-Analysis', 'RCT', 'Cohort Study', 'Case-Control Study',\n"
-            "  'Case Report / Case Series', 'Pharmacovigilance DB Study', 'Other'\n\n"
-            "SUMMARY REQUIREMENTS (included articles only):\n"
-            "  - 1-3 sentences capturing the key findings that will appear in the final "
-            "pharmacovigilance report.\n"
-            "  - Include: patient count (n=X), relevant demographics if stated, "
-            "dose/timing if known, clinical outcome.\n"
-            "  - Example: 'Case series (n=3, males 45-62 yrs): drug 50-100 mg associated "
-            "with AE onset within 24h; partial recovery in 2/3 cases.'\n\n"
-            "=== CRITICAL ISOLATION RULE ===\n"
-            "Your decision and summary must be derived EXCLUSIVELY from the single abstract below.\n"
-            "NEVER include information from any other source, memory, or prior article.\n"
-            "SELF-CHECK before responding: 'Does my summary contain ANY fact not present "
-            "verbatim in the abstract below?' If yes — remove it.\n"
-            "================================\n\n"
-            f"=== ARTICLE | PMID: {pmid} ===\n"
-            f"Title: {title}\n"
-            f"Abstract: {abstract}\n"
-            f"=== END ARTICLE | PMID: {pmid} ===\n\n"
-            "Respond with JSON only (no explanation, no markdown fences)."
-        )
-
-        try:
-            resp = llm_client.chat.completions.create(
-                model=CHAT_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-            )
-            raw = resp.choices[0].message.content.strip()
-            if "```" in raw:
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:].strip()
-            extracted = json.loads(raw)
-            if isinstance(extracted, dict):
-                include = extracted.get("include")
-                if include is True:
-                    art["pv_include"] = True
-                    summary = extracted.get("summary", "")
-                    if isinstance(summary, str) and summary.strip():
-                        art["pv_summary"] = summary.strip()
-                    study_type = extracted.get("study_type", "")
-                    if isinstance(study_type, str) and study_type.strip():
-                        art["pv_study_type"] = study_type.strip()
-                else:
-                    art["pv_include"] = False
-        except Exception as exc:
-            print(f"[Article gate error — PMID {pmid}] {exc}")
-            # Fail-open: include the article so no signal is silently dropped.
-            art["pv_include"] = True
+    with ThreadPoolExecutor(max_workers=MAX_PHASE2_WORKERS) as executor:
+        futures = {
+            executor.submit(_gate_single_article, art, investigation_context): art
+            for art in articles
+        }
+        for future in as_completed(futures):
+            try:
+                future.result()  # re-raises any unhandled exception from the thread
+            except Exception as exc:
+                art = futures[future]
+                print(f"[Phase2 thread error — PMID {art.get('pmid')}] {exc}")
+                art["pv_include"] = True  # fail-open
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:

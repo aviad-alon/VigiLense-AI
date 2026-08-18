@@ -8,6 +8,7 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 
 import json
 import re
+import openai
 from config import llm_client, supabase, CHAT_MODEL
 from tools import TOOLS, dispatch
 
@@ -330,12 +331,28 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     for _ in range(MAX_ITERATIONS):
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
-        response = llm_client.chat.completions.create(
-            model       = CHAT_MODEL,
-            messages    = messages,
-            tools       = TOOLS,
-            tool_choice = "auto",
-        )
+        try:
+            response = llm_client.chat.completions.create(
+                model       = CHAT_MODEL,
+                messages    = messages,
+                tools       = TOOLS,
+                tool_choice = "auto",
+            )
+        except openai.RateLimitError as exc:
+            print(f"[ReAct loop] OpenAI rate limit — breaking: {exc}")
+            break
+        except openai.BadRequestError as exc:
+            # 400 — most likely context_length_exceeded; re-raise other 400s
+            if "context" in str(exc).lower() or "length" in str(exc).lower():
+                print(f"[ReAct loop] Context length exceeded — breaking: {exc}")
+                break
+            raise
+        except (openai.APIConnectionError, openai.APITimeoutError) as exc:
+            print(f"[ReAct loop] Network error reaching OpenAI — breaking: {exc}")
+            break
+        except openai.APIStatusError as exc:
+            print(f"[ReAct loop] OpenAI API error {exc.status_code} — breaking: {exc}")
+            break
         last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 
