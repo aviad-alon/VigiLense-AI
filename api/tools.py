@@ -908,7 +908,7 @@ PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcg
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
 SCREENING_BATCH_SIZE     = 30   # articles per LLM screening call
 MAX_PUBMED_SCREEN        = 60   # targeted mode: 2 Phase-1 batches → ~40s (was 150 → ~100s)
-MAX_PUBMED_SCREEN_BROAD  = 100  # broad surveillance mode: larger window, recent-date sort
+MAX_PUBMED_SCREEN_BROAD  = 50   # broad mode: 2 Phase-1 batches → ~40s; keeps total < 240s budget
 
 # ── PubMed Publication Type Filter ────────────────────────────────────────────
 # Appended to every investigation query to restrict results to clinical evidence

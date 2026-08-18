@@ -8,9 +8,14 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 
 import json
 import re
+import time
 import openai
 from config import llm_client, supabase, CHAT_MODEL
 from tools import TOOLS, dispatch
+
+# Hard wall: exit the ReAct loop this many seconds before Vercel's 300s maxDuration.
+# Ensures Python can still serialise and return a valid HTTP response.
+_LOOP_TIME_BUDGET = 240  # seconds
 
 # ── Citation Integrity Helpers ─────────────────────────────────────────────────
 # These run in Python — independent of LLM behaviour — guaranteeing that
@@ -379,7 +384,14 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     faers_pending:  dict[tuple, str]  = {}   # (a,b,c,d) → ae_name
     faers_ror_cache: dict[str, dict]  = {}   # ae_name.lower() → {ror, ci_95, faers_significant}
 
+    _loop_start = time.time()   # wall-clock guard — break before Vercel's 300s maxDuration
+
     for _ in range(MAX_ITERATIONS):
+
+        # ── Time-budget guard: exit cleanly before Vercel kills the connection ──
+        if time.time() - _loop_start > _LOOP_TIME_BUDGET:
+            print(f"[ReAct loop] Time budget ({_LOOP_TIME_BUDGET}s) reached at iteration {_}. Breaking.")
+            break
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
         # After a correction injection, force the LLM to call a tool (cannot write text again)
@@ -579,12 +591,20 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             break
 
     # Fallback if agent never called submit_final_report or abort_investigation
+    # (includes graceful exit from time-budget guard)
     if not final_report:
-        last_text = (
-            last_choice.message.content
-            if last_choice and last_choice.message.content
-            else "Agent completed without a final report."
-        )
+        elapsed = time.time() - _loop_start
+        if elapsed > _LOOP_TIME_BUDGET:
+            last_text = (
+                f"Investigation did not complete within the {_LOOP_TIME_BUDGET}s time budget "
+                f"(elapsed: {elapsed:.0f}s). Try adding a specific focus area to narrow the query."
+            )
+        else:
+            last_text = (
+                last_choice.message.content
+                if last_choice and last_choice.message.content
+                else "Agent completed without a final report."
+            )
         final_report = {
             "confidence_score":      0,
             "evidence_chain":        [s["module"] for s in steps],
