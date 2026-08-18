@@ -51,8 +51,9 @@ llm_client = None
 _api_key   = os.getenv("OPENAI_API_KEY_TEMP")
 if _api_key:
     llm_client = OpenAI(
-        api_key = _api_key,
-        timeout = 90.0,
+        api_key  = _api_key,
+        base_url = "https://api.openai.com/v1",  # explicit override in case OPENAI_BASE_URL env var is set
+        timeout  = 90.0,
     )
 
 # ── Pinecone client ───────────────────────────────────────────────────────────
