@@ -414,14 +414,14 @@ TOOLS = [
                             "This drives the master report header and subject table — set it carefully:\n\n"
                             "'significant' — FAERS ROR ≥ 2.0 with lower CI > 1.0. "
                             "The statistical threshold is met and constitutes a confirmed signal.\n\n"
-                            "'potential'   — FAERS is negative or not calculable, BUT Tier 1 literature exists "
-                            "with novel, actionable case reports or clinical findings NOT already fully documented "
+                            "'potential'   — FAERS is negative or not calculable, BUT literature contains "
+                            "novel, actionable case reports or clinical findings NOT already fully documented "
                             "in the FDA label / internal KB for this specific adverse event. "
                             "Use this whenever literature evidence warrants safety team review — "
                             "even a single unlabeled case report qualifies.\n\n"
                             "'none'        — Use ONLY when BOTH: (a) FAERS shows no disproportionality, "
-                            "AND (b) no novel unlabeled Tier 1 literature was found. "
-                            "If any Tier 1 novel finding exists, do NOT use 'none'."
+                            "AND (b) no novel unlabeled findings were found in the literature. "
+                            "If any novel finding exists, do NOT use 'none'."
                         )
                     },
                     "summary_findings": {
@@ -474,33 +474,15 @@ TOOLS = [
                                     "type": "string",
                                     "description": "The PMID exactly as returned by the PubMed tool."
                                 },
-                                "tier": {
-                                    "type": "string",
-                                    "enum": ["1", "2"],
-                                    "description": (
-                                        "Tier classification controlling how this article is rendered in the report:\n"
-                                        "'1' = ACTIONABLE — article directly reports the investigated adverse event via: "
-                                        "case report/series with patient cases; clinical trial/cohort with statistically significant risk or incidence; "
-                                        "or novel safety alert. → Full entry rendered in report.\n"
-                                        "'2' = BACKGROUND — general review, mechanistic/animal study, PK/PD paper, "
-                                        "or any study with NO direct cases of the target adverse event. "
-                                        "→ Omitted from individual entries; grouped into a single note. "
-                                        "Default to '1' if uncertain."
-                                    )
-                                },
                                 "relevance_summary": {
                                     "type": "string",
                                     "description": (
-                                        "Written according to tier:\n"
-                                        "Tier 1: 1-2 tight sentences stating case count, relative risk, or clinical safety outcome. "
-                                        "No titles/author names. Example: 'Case series (n=3, males 45–62): sildenafil 50–100 mg "
-                                        "associated with acute NAION onset within 24h; partial visual recovery in 2/3 cases.'\n"
-                                        "Tier 2: Single line only: 'No [target AE] reported; [one-sentence mechanistic context].' "
-                                        "Example: 'No NAION reported; supports systemic hypotension as plausible mechanism via PDE5 vasodilation.'"
+                                        "1-3 sentences: study design, population size (n=X), key finding with effect size and CI if reported, clinical outcome. "
+                                        "No titles or author names. Derived SOLELY from that article's abstract — never borrow from another article."
                                     )
                                 }
                             },
-                            "required": ["pmid", "tier", "relevance_summary"]
+                            "required": ["pmid", "relevance_summary"]
                         }
                     },
                     "case_counts": {
@@ -823,10 +805,9 @@ def _screen_articles_llm(
     LLM call extracts tier + summary from ONLY that article's abstract.
     One call per article = ZERO cross-contamination between papers.
 
-    Pre-computed tier/summary are stored on each article dict as:
-        art["pv_tier"]    — "1" or "2"
+    Pre-computed summary is stored on each article dict as:
         art["pv_summary"] — concise analytical extraction
-    These are later used by agent.py with priority over LLM-batch-generated summaries.
+    Used by agent.py with priority over LLM-batch-generated summaries.
     """
     if not articles or not llm_client:
         return articles
@@ -891,7 +872,7 @@ def _screen_articles_llm(
             print(f"[PubMed screening error — batch {batch_start // SCREENING_BATCH_SIZE + 1}] {exc}")
             relevant.extend(batch)  # fail-open
 
-    # ── Phase 2: Per-article isolated tier + summary extraction ──────────────
+    # ── Phase 2: Per-article isolated summary extraction ─────────────────────
     _extract_article_summaries(relevant, investigation_context)
 
     return relevant
@@ -902,18 +883,16 @@ def _extract_article_summaries(
     investigation_context: str,
 ) -> None:
     """
-    Extract tier and relevance_summary for each article INDIVIDUALLY.
+    Extract a relevance_summary for each article INDIVIDUALLY.
 
     One dedicated LLM call per article — the model sees ONLY that article's
     abstract, title, and PMID. This architectural isolation makes cross-
     contamination between articles structurally impossible.
 
     Mutates each article dict in-place:
-        art["pv_tier"]    — "1" (actionable) or "2" (background)
-        art["pv_summary"] — concise analytical extraction matching the tier format
+        art["pv_summary"] — concise analytical extraction (1-3 sentences)
 
-    Failures are silent and non-blocking: an article without pv_tier/pv_summary
-    falls back to the LLM-generated summary in generate_pharmacovigilance_report.
+    Failures are silent and non-blocking.
     """
     if not articles or not llm_client:
         return
@@ -921,50 +900,25 @@ def _extract_article_summaries(
     for art in articles:
         pmid     = art.get("pmid", "")
         title    = art.get("title", "Unknown title")
-        abstract = (art.get("abstract") or "")[:2000]  # full abstract, capped at 2 k chars
+        abstract = (art.get("abstract") or "")[:2000]
 
         prompt = (
             "You are a Pharmacovigilance Literature Analyst.\n\n"
             f"Investigation Context:\n{investigation_context}\n\n"
-            "Analyze the SINGLE article delimited below and provide:\n"
-            "  1. tier: '1' (actionable) or '2' (background)\n"
-            "  2. summary: a concise analytical extraction\n\n"
-            "TIER CLASSIFICATION:\n"
-            "  '1' = ACTIONABLE — use when the article provides:\n"
-            "    - A direct case report or case series with actual patient occurrences of the target AE.\n"
-            "    - A clinical trial or cohort with statistically significant AE incidence or risk.\n"
-            "    - A novel safety alert or pharmacovigilance database study with case counts.\n"
-            "  '2' = BACKGROUND — use when the article is:\n"
-            "    - A general narrative review with no original case data.\n"
-            "    - A mechanistic, animal, or in-vitro study with no patient AE reports.\n"
-            "    - A PK/PD study not reporting the target AE.\n"
-            "    - A study explicitly concluding no occurrences of the target AE.\n\n"
-            "SUMMARY FORMAT:\n"
-            "  Tier 1: 1-2 tight sentences — case count or risk metric, dose/timing if known, "
-            "clinical outcome. No titles or author names.\n"
-            "    Example: 'Case series (n=3, males 45-62 yrs): drug 50-100 mg associated with "
-            "AE onset within 24h of ingestion; partial recovery in 2/3 cases.'\n"
-            "  Tier 2: Single line only: 'No [target AE] reported; [one-sentence mechanistic "
-            "or contextual note].'\n"
-            "    Example: 'No NAION reported; supports systemic hypotension as a plausible "
-            "mechanism via PDE5-mediated vasodilation.'\n\n"
+            "Write a concise analytical summary (1-3 sentences) for the article below.\n"
+            "Include: study design, population size (n=X), key finding with effect size and CI if reported, clinical outcome.\n"
+            "Do NOT include the article title or author names.\n\n"
             "=== CRITICAL ISOLATION RULE ===\n"
-            "Your tier and summary must be derived EXCLUSIVELY from the single abstract below.\n"
+            "Your summary must be derived EXCLUSIVELY from the single abstract below.\n"
             "NEVER include information from any other source, memory, or prior article.\n"
-            "TITLE-TO-FINDING VALIDATION — mandatory before writing the summary:\n"
-            "  - If the title describes an animal, preclinical, or mechanistic study:\n"
-            "    → Assign Tier '2'. DO NOT write patient case details (n=X, age, sex, dose).\n"
-            "  - If the title says 'case report' or 'case series':\n"
-            "    → Assign Tier '1'. Include ONLY case details explicitly stated in THIS abstract.\n"
-            "SELF-CHECK: Ask yourself: 'Does my summary contain ANY fact not present verbatim\n"
-            "in the abstract below?' If yes — remove it before responding.\n"
+            "SELF-CHECK: Does my summary contain ANY fact not present in the abstract below? If yes — remove it.\n"
             "================================\n\n"
             f"=== ARTICLE | PMID: {pmid} ===\n"
             f"Title: {title}\n"
             f"Abstract: {abstract}\n"
             f"=== END ARTICLE | PMID: {pmid} ===\n\n"
             "Respond with JSON only (no explanation, no markdown fences):\n"
-            '{"tier": "1" or "2", "summary": "your extraction here"}'
+            '{"summary": "your extraction here"}'
         )
 
         try:
@@ -980,14 +934,10 @@ def _extract_article_summaries(
                     raw = raw[4:].strip()
             extracted = json.loads(raw)
             if isinstance(extracted, dict):
-                if extracted.get("tier") in ("1", "2"):
-                    art["pv_tier"] = extracted["tier"]
                 if isinstance(extracted.get("summary"), str) and extracted["summary"].strip():
                     art["pv_summary"] = extracted["summary"].strip()
         except Exception as exc:
             print(f"[Article summary extraction error — PMID {pmid}] {exc}")
-            # Fail gracefully — article remains without pv_tier/pv_summary;
-            # agent.py will fall back to the LLM-provided summary at report time.
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:
@@ -1007,7 +957,7 @@ def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[li
         "db":      "pubmed",
         "term":    dated_term,
         "retmode": "json",
-        "sort":    "relevance",
+        "sort":    "pub+date",  # newest first — pharmacovigilance monitoring prioritizes recency
     }
 
     # Step 1: count only
