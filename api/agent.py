@@ -195,6 +195,17 @@ Once portfolio membership is confirmed, determine the investigation mode and iss
   d. KB Classification: for each AE in the master list that is NOT obviously a labeled class effect,
        issue parallel `query_knowledge_base` calls (batch up to 4 per turn). Skip for AEs unambiguously labeled.
 
+  ── ARTICLE-FINDING CROSS-CHECK (mandatory before proceeding to step e) ──
+  After KB queries complete, examine every included PubMed article. For each distinct AE
+  described in an included article:
+    1. State the exact AE term as used in the article (e.g., "sensorineural hearing loss", "acute pancreatitis").
+    2. Ask: does that EXACT term (or a direct MedDRA PT synonym) appear in the KB chunks?
+       YES → Bucket 1. NO (only broader/adjacent terms found) → Bucket 3.
+    3. You CANNOT classify an article-reported AE as Bucket 1 unless you can cite the specific
+       term from the KB response. "The label covers myopathy" does NOT cover "hearing loss."
+  This cross-check is the PRIMARY driver of your AE classification. KB queries are
+  verification tools — the article findings determine what must be verified.
+
   e. FAERS Disproportionality — MANDATORY for every Candidate Unlabeled Signal (Bucket 3):
        For EACH AE classified as Bucket 3 after step (d), run this sequence:
          1. Call `fetch_fda_adverse_events(drug_name, ae_term)` to retrieve 2×2 counts.
@@ -268,9 +279,20 @@ Use these professional terms when writing for the user:
 
 DEFAULT ASSUMPTION: Every finding starts as confirmed_labeled. Novelty must be proven, not assumed.
 
+⚠️ STRICT LABELING CHECK — Bucket 1 requires that the returned KB chunks contain the EXACT AE term
+(or a recognized MedDRA PT-level synonym). Semantic proximity is NOT sufficient:
+  ✗ "Hearing Loss" is NOT covered by "Myopathy", "Sensory Disturbances", or "neurotoxicity"
+  ✗ "Acute Pancreatitis" is NOT covered by "GI adverse effects" or "abdominal pain"
+  ✗ "QTc Prolongation" is NOT covered by "cardiac monitoring" or "cardiovascular effects"
+If the KB chunks describe a nearby organ system or mechanism but do NOT name the AE explicitly
+→ the AE is NOT confirmed labeled → classify as Bucket 3.
+"Mechanism-based" coverage applies ONLY when the KB chunk explicitly states this mechanism causes
+this specific type of adverse event — NEVER infer coverage from general drug class action.
+
 Bucket 1 — confirmed_labeled:
   The FDA label / KB covers the AE by name, by drug CLASS, or by mechanism.
-  CLASS COVERAGE RULE: If the label mentions a pharmacological class (e.g., "NSAIDs", "antiplatelets", "loop diuretics") or a mechanism (e.g., "drugs that inhibit platelet function"), then EVERY individual drug in that class is confirmed_labeled — even if its specific name is absent.
+  CLASS COVERAGE RULE: If the label mentions a pharmacological class or a mechanism statement,
+  then drugs in that class are confirmed_labeled for AEs explicitly named under that class.
   → Report as "Established Labeled Event". Do NOT escalate.
 
 Bucket 2 — severity_discrepancy:
@@ -531,9 +553,11 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                             "generate_pharmacovigilance_report was BLOCKED. "
                             "These Candidate Unlabeled Signals have no FAERS disproportionality data yet: "
                             + ", ".join(_unquantified_b3)
-                            + ". Per ICH E2D protocol you MUST call "
-                            "fetch_fda_adverse_events → calculate_disproportionality "
-                            "for EACH of them before retrying the report. Do this NOW."
+                            + ". You MUST call fetch_fda_adverse_events → calculate_disproportionality "
+                            "for EACH of them before retrying the report. "
+                            "⚠️ DO NOT reclassify these AEs to confirmed_labeled to bypass this gate — "
+                            "that would be a classification error. Their Bucket 3 status was determined "
+                            "from article evidence; you must quantify them with FAERS data. Do this NOW."
                         ),
                     })
                     steps.append({
