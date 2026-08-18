@@ -174,15 +174,31 @@ Once portfolio membership is confirmed, determine the investigation mode and iss
   c. Evidence-triggered KB checks: as literature results arrive, for each AE that is NOT obviously the focus event or a clear class effect, verify label coverage with `query_knowledge_base`. Batch multiple AE checks into one parallel turn.
   d. FAERS fallback: only if literature has no 2×2 counts AND the AE is a Candidate Unlabeled Signal worth quantifying.
 
-  BROAD SURVEILLANCE MODE:
-  a. Broad PubMed search: `fetch_pubmed_advanced` with a wide safety query:
-     "[drug_name]" AND ("adverse drug reaction" OR "adverse effect" OR "toxicity" OR "case report" OR "pharmacovigilance")
-     investigation_context = "[drug] — broad safety surveillance (any adverse event)". Retrieve up to 20 articles.
-  b. AE Discovery: from returned summaries, extract ALL distinct adverse events reported. Build an explicit list.
-  c. KB Classification: for each AE that is NOT unambiguously an established class effect, issue parallel `query_knowledge_base` calls (batch up to 4 per turn) to verify label coverage. Skip KB for AEs obviously labeled (e.g., bleeding for anticoagulants — no KB call needed).
-  d. FAERS: call `fetch_fda_adverse_events` ONLY for confirmed Candidate Unlabeled Signals — not for every AE.
-  e. Report: generate_pharmacovigilance_report with surveillance_mode=true, adverse_event="General Safety Surveillance — Broad Scan", and a fully populated discovered_events array.
-  f. signal_level: "significant" if any AE has ROR ≥ 2.0 (lower CI > 1.0) OR any Bucket 2 finding with fatal/life-threatening outcome · "potential" if any Candidate Unlabeled Signal OR any Bucket 2 trigger present (high incidence, vulnerable subpopulation, serious outcome) · "none" ONLY if all AEs are Bucket 1 with no severity triggers present.
+  BROAD SURVEILLANCE MODE — run steps (a) and (b) IN THE SAME PARALLEL TURN:
+  a. PubMed broad search: `fetch_pubmed_advanced` with:
+       query_term = '"[drug_name]" AND ("adverse drug reaction" OR "adverse effect" OR "toxicity" OR "case report" OR "pharmacovigilance")'
+       investigation_context = "[drug] — broad safety surveillance (any adverse event)"
+       surveillance_mode = true   ← REQUIRED — enables broader gate criteria that accept systematic reviews
+  b. FAERS AE discovery: `fetch_top_faers_events` with drug_name — call IN PARALLEL with (a).
+       Returns top 15 most-reported AEs from spontaneous reports, independent of literature.
+
+  c. AE Consolidation: merge the AE list from PubMed summaries + FAERS top list → deduplicate → build a master AE list.
+       If PubMed returned 0 included articles, rely on the FAERS list as the PRIMARY AE source.
+       Note for each AE: appeared in PubMed only / FAERS only / both.
+
+  d. KB Classification: for each AE in the master list that is NOT obviously a labeled class effect,
+       issue parallel `query_knowledge_base` calls (batch up to 4 per turn). Skip for AEs unambiguously labeled.
+
+  e. FAERS quantification: call `fetch_fda_adverse_events` ONLY for confirmed Candidate Unlabeled Signals (Bucket 3)
+       that are worth quantifying — not for every AE in the list.
+
+  f. Report: generate_pharmacovigilance_report with surveillance_mode=true,
+       adverse_event = "General Safety Surveillance — Broad Scan",
+       discovered_events = fully populated array of all classified AEs.
+
+  g. signal_level: "significant" if any AE has ROR ≥ 2.0 (lower CI > 1.0) OR any Bucket 2 finding with fatal/life-threatening outcome ·
+       "potential" if any Candidate Unlabeled Signal OR any Bucket 2 trigger present (high incidence, vulnerable subpopulation, serious outcome) ·
+       "none" ONLY if all AEs are Bucket 1 with no severity triggers present.
 
 ── STEP 3 — Stop When Evidence Is Complete:
 Stop investigating when ALL of the following are true:
@@ -201,17 +217,22 @@ TOOLBOX GUIDANCE:
 2. `get_drug_profile` — Resolves active ingredients, drug class, and mechanism. Call once per investigation (parallel with initial KB query in Step 1).
 
 3. `fetch_pubmed_advanced` — Drug-specific AE literature from PubMed. Use strict boolean syntax: `"drug_name" AND ("ae1" OR "ae2")` — all multi-word terms double-quoted. Always pass investigation_context.
+   In Broad Surveillance Mode: pass surveillance_mode=true to enable broader article gate criteria (accepts systematic reviews that enumerate AEs with patient counts).
 
 4. `search_drug_class_effects` — Class-level AE literature. Use to contextualize whether an AE is a class effect or drug-specific signal. Call after `get_drug_profile` to use the correct class name.
 
 5. `check_past_signals` — Historical investigation logs. Prevents re-escalating already-reviewed signals.
 
-6. `fetch_fda_adverse_events` — FAERS real-world case counts. Call ONLY when: (a) literature has no explicit 2×2 counts, AND (b) the AE is a Candidate Unlabeled Signal worth quantifying. Do NOT call for Established Labeled Events.
+6. `fetch_top_faers_events` — BROAD SURVEILLANCE MODE only. Call in Step 2 PARALLEL with `fetch_pubmed_advanced` to enumerate top N spontaneously reported AEs for the drug.
+   Use the returned AE list as discovery seeds. High report count ≠ causality — classify every AE via `query_knowledge_base` before drawing conclusions.
+   Do NOT call in Targeted Mode (use `fetch_fda_adverse_events` for quantification after AE is confirmed Bucket 3).
+
+7. `fetch_fda_adverse_events` — FAERS real-world case counts for a specific drug-AE pair. Call ONLY when: (a) literature has no explicit 2×2 counts, AND (b) the AE is a Candidate Unlabeled Signal worth quantifying. Do NOT call for Established Labeled Events.
    When FAERS returns demographics (gender, age, concomitant drugs) → include a brief summary in Signal Assessment.
 
-7. `calculate_disproportionality` — ROR + 95% CI. Call only with explicit numerical counts from a tool response. Tag source: "Literature / PubMed (PMID: X)" or "OpenFDA FAERS Database". Never estimate.
+8. `calculate_disproportionality` — ROR + 95% CI. Call only with explicit numerical counts from a tool response. Tag source: "Literature / PubMed (PMID: X)" or "OpenFDA FAERS Database". Never estimate.
 
-8. `generate_pharmacovigilance_report` → `submit_final_report` — Always in this order. Pass case_counts with raw a/b/c/d when disproportionality is available.
+9. `generate_pharmacovigilance_report` → `submit_final_report` — Always in this order. Pass case_counts with raw a/b/c/d when disproportionality is available.
 
 LITERATURE SIGNAL CLASSIFICATION — 3-BUCKET FRAMEWORK:
 Apply to EVERY literature finding during your reasoning. Classify as you observe each tool result — do not defer to the report step.

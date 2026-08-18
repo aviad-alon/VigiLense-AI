@@ -16,6 +16,7 @@ Tools:
   8.  abort_investigation               — Terminates the ReAct loop on guardrail violation
   9.  generate_pharmacovigilance_report — Markdown report generator (CIOMS/ICH E2D)
   10. submit_final_report               — Terminates the ReAct loop normally
+  11. fetch_top_faers_events            — OpenFDA FAERS AE enumeration for Broad Surveillance Mode
 """
 
 import json
@@ -139,6 +140,37 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "fetch_top_faers_events",
+            "description": (
+                "Enumerate the top N most-reported adverse events for a drug from OpenFDA FAERS. "
+                "Call this in BROAD SURVEILLANCE MODE as a PARALLEL step alongside the broad PubMed search — "
+                "it discovers which AEs are most frequently spontaneously reported, independent of label status. "
+                "Returns [{adverse_event, report_count}] ranked by report frequency. "
+                "Use the returned AEs as discovery seeds — do NOT treat high count as proof of causality or unlabeled status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "drug_name": {
+                        "type": "string",
+                        "description": (
+                            "Generic or brand name of the drug to query in FAERS. "
+                            "Use the same name resolved by get_drug_profile."
+                        )
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of top adverse events to return (default: 15, max: 25).",
+                        "default": 15
+                    }
+                },
+                "required": ["drug_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "fetch_pubmed_advanced",
             "description": (
                 "Fetch medical literature abstracts from PubMed via NCBI E-Utilities API. "
@@ -177,6 +209,16 @@ TOOLS = [
                             "Drug name, active ingredients, AE, and demographic context for the LLM screener "
                             "(e.g. 'Sertraline (sertraline HCl, SSRI) — bruxism in adolescents'). ALWAYS provide."
                         )
+                    },
+                    "surveillance_mode": {
+                        "type": "boolean",
+                        "description": (
+                            "Set to true when performing BROAD SURVEILLANCE MODE (no specific AE target). "
+                            "Enables broader article gate criteria that accept systematic reviews and meta-analyses "
+                            "that enumerate drug-specific AEs with patient counts — articles normally excluded in targeted mode. "
+                            "Default: false (targeted mode — strict case-report/trial criteria)."
+                        ),
+                        "default": False
                     }
                 },
                 "required": ["query_term"]
@@ -842,6 +884,7 @@ MAX_PUBMED_SCREEN     = 30   # cap on articles fetched when screening is active
 def _screen_articles_llm(
     articles: list[dict],
     investigation_context: str,
+    surveillance_mode: bool = False,
 ) -> list[dict]:
     """
     Two-phase LLM pipeline for article screening and summarization.
@@ -922,12 +965,12 @@ def _screen_articles_llm(
             relevant.extend(batch)  # fail-open
 
     # ── Phase 2: Per-article gate + summary extraction ───────────────────────
-    _extract_article_summaries(relevant, investigation_context)
+    _extract_article_summaries(relevant, investigation_context, surveillance_mode)
 
     return [a for a in relevant if a.get("pv_include") is True]
 
 
-def _gate_single_article(art: dict, investigation_context: str) -> None:
+def _gate_single_article(art: dict, investigation_context: str, surveillance_mode: bool = False) -> None:
     """
     Gate and summarize ONE article via a single isolated LLM call.
 
@@ -938,26 +981,52 @@ def _gate_single_article(art: dict, investigation_context: str) -> None:
 
     Thread-safe: each call operates on a distinct article dict.
     Fails-open on any error so no signal is silently dropped.
+
+    surveillance_mode=True: broader gate — accepts systematic reviews/meta-analyses that
+    enumerate drug-specific AEs with patient counts (needed for broad scans where top PubMed
+    results are review articles for established drugs).
     """
     pmid     = art.get("pmid", "")
     title    = art.get("title", "Unknown title")
     abstract = (art.get("abstract") or "")[:2000]
 
+    if surveillance_mode:
+        include_exclude_block = (
+            "Review the SINGLE article below and decide:\n"
+            "  — INCLUDE (include: true) for BROAD SURVEILLANCE if it reports ANY adverse "
+            "event data for this drug:\n"
+            "      • Case report, case series, RCT, observational cohort, or clinical trial "
+            "reporting AE incidence or risk.\n"
+            "      • Pharmacovigilance database study (FAERS, VigiBase, WHO) with case counts.\n"
+            "      • Systematic review or meta-analysis that EXPLICITLY enumerates drug-specific "
+            "AEs with patient counts or percentages (n=X or X%) — INCLUDE if it lists AEs with "
+            "quantitative frequency data.\n"
+            "  — EXCLUDE (include: false) ONLY if:\n"
+            "      • Narrative editorial or opinion piece with no AE data.\n"
+            "      • Animal, in-vitro, or mechanistic study.\n"
+            "      • PK/PD study that reports no patient AE data.\n"
+            "      • Drug mentioned only in passing with no drug-specific AE data.\n\n"
+        )
+    else:
+        include_exclude_block = (
+            "Review the SINGLE article below and decide:\n"
+            "  — INCLUDE (include: true) if it contains DIRECT patient-level evidence "
+            "of the investigated adverse event:\n"
+            "      • A case report or case series with actual patient occurrences.\n"
+            "      • A clinical trial or observational cohort reporting AE incidence or risk.\n"
+            "      • A pharmacovigilance database study (FAERS, VigiBase) with case counts.\n"
+            "  — EXCLUDE (include: false) if it is:\n"
+            "      • A narrative review, meta-analysis, or editorial with no original case data.\n"
+            "      • A mechanistic, animal, or in-vitro study.\n"
+            "      • A PK/PD study not reporting the target AE in patients.\n"
+            "      • A study explicitly concluding the AE did not occur.\n\n"
+        )
+
     prompt = (
         "You are a Pharmacovigilance Literature Analyst.\n\n"
         f"Investigation Context:\n{investigation_context}\n\n"
-        "Review the SINGLE article below and decide:\n"
-        "  — INCLUDE (include: true) if it contains DIRECT patient-level evidence "
-        "of the investigated adverse event:\n"
-        "      • A case report or case series with actual patient occurrences.\n"
-        "      • A clinical trial or observational cohort reporting AE incidence or risk.\n"
-        "      • A pharmacovigilance database study (FAERS, VigiBase) with case counts.\n"
-        "  — EXCLUDE (include: false) if it is:\n"
-        "      • A narrative review, meta-analysis, or editorial with no original case data.\n"
-        "      • A mechanistic, animal, or in-vitro study.\n"
-        "      • A PK/PD study not reporting the target AE in patients.\n"
-        "      • A study explicitly concluding the AE did not occur.\n\n"
-        "IF EXCLUDED → respond with ONLY: {\"include\": false}\n"
+        + include_exclude_block
+        + "IF EXCLUDED → respond with ONLY: {\"include\": false}\n"
         "Do NOT write a summary for excluded articles.\n\n"
         "IF INCLUDED → respond with:\n"
         "{\"include\": true, \"summary\": \"<your summary here>\", \"study_type\": \"<design>\"}\n\n"
@@ -1016,6 +1085,7 @@ def _gate_single_article(art: dict, investigation_context: str) -> None:
 def _extract_article_summaries(
     articles: list[dict],
     investigation_context: str,
+    surveillance_mode: bool = False,
 ) -> None:
     """
     Gate and summarize each article INDIVIDUALLY via parallel LLM calls.
@@ -1031,13 +1101,15 @@ def _extract_article_summaries(
         include=true  → art["pv_include"] = True, art["pv_summary"] set.
 
     Only articles with pv_include=True are returned to the agent.
+
+    surveillance_mode=True: passes broader gate criteria to _gate_single_article.
     """
     if not articles or not llm_client:
         return
 
     with ThreadPoolExecutor(max_workers=MAX_PHASE2_WORKERS) as executor:
         futures = {
-            executor.submit(_gate_single_article, art, investigation_context): art
+            executor.submit(_gate_single_article, art, investigation_context, surveillance_mode): art
             for art in articles
         }
         for future in as_completed(futures):
@@ -1163,19 +1235,23 @@ def fetch_pubmed_advanced(
     max_results: int = 10,
     min_year: int = 2020,
     investigation_context: str | None = None,
+    surveillance_mode: bool = False,
 ) -> dict:
     """
     Search PubMed for recent literature by clinical query term.
     When investigation_context is provided, fetches up to MAX_PUBMED_SCREEN articles
     and runs LLM relevance screening before returning results.
     Returns structured article records with full abstract text and audit metadata.
+
+    surveillance_mode=True: passes broader gate criteria to the LLM screener so that
+    systematic reviews enumerating drug-specific AEs are accepted (not excluded as in targeted mode).
     """
     try:
         fetch_limit = MAX_PUBMED_SCREEN if investigation_context else max_results
         articles, audit = _pubmed_fetch(query_term, fetch_limit, min_year)
 
         if investigation_context and articles:
-            articles = _screen_articles_llm(articles, investigation_context)
+            articles = _screen_articles_llm(articles, investigation_context, surveillance_mode)
             audit["total_relevant"] = len(articles)
 
         return {
@@ -1256,6 +1332,66 @@ def get_drug_profile(drug_name: str) -> dict:
         "mechanism":          "Information unavailable via automated drug registries.",
         "source":             "fallback"
     }
+
+
+def fetch_top_faers_events(drug_name: str, limit: int = 15) -> dict:
+    """
+    Enumerate the top N most-reported adverse events for a drug from OpenFDA FAERS.
+
+    Uses the FAERS count aggregation endpoint — no specific event term needed.
+    Returns AEs ranked by spontaneous report frequency.
+
+    Designed for Broad Surveillance Mode: call in parallel with the broad PubMed search
+    to discover which AEs are most frequently reported before any hypothesis is formed.
+
+    Note: high report count does NOT imply causality or unlabeled status.
+    Each returned AE must be classified via query_knowledge_base.
+    """
+    drug_q = f'patient.drug.medicinalproduct:"{drug_name}"'
+    try:
+        resp = requests.get(
+            OPENFDA_FAERS_URL,
+            params={
+                "search": drug_q,
+                "count":  "patient.reaction.reactionmeddrapt.exact",
+                "limit":  min(limit, 25),
+            },
+            timeout=FAERS_TIMEOUT,
+        )
+        if resp.status_code == 404:
+            return {
+                "drug_name":             drug_name,
+                "total_events_returned": 0,
+                "top_adverse_events":    [],
+                "error": f"Drug '{drug_name}' not found in FAERS.",
+            }
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        top_aes = [{"adverse_event": r["term"], "report_count": r["count"]} for r in results]
+        return {
+            "drug_name":             drug_name,
+            "total_events_returned": len(top_aes),
+            "top_adverse_events":    top_aes,
+            "note": (
+                "Top FAERS AEs ranked by spontaneous report frequency. "
+                "Use as AE discovery seeds in Broad Surveillance Mode. "
+                "High count ≠ causality or unlabeled status — classify each via query_knowledge_base."
+            ),
+        }
+    except requests.exceptions.Timeout:
+        return {
+            "drug_name":             drug_name,
+            "total_events_returned": 0,
+            "top_adverse_events":    [],
+            "error": "FAERS API timed out.",
+        }
+    except Exception as exc:
+        return {
+            "drug_name":             drug_name,
+            "total_events_returned": 0,
+            "top_adverse_events":    [],
+            "error": f"Query failed: {exc}",
+        }
 
 
 def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
@@ -1759,8 +1895,10 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
         }))
     if fn_name == "fetch_fda_adverse_events":
         return fetch_fda_adverse_events(**_filter(fn_args, {"drug_name", "adverse_event"}))
+    if fn_name == "fetch_top_faers_events":
+        return fetch_top_faers_events(**_filter(fn_args, {"drug_name", "limit"}))
     if fn_name == "fetch_pubmed_advanced":
-        return fetch_pubmed_advanced(**_filter(fn_args, {"query_term", "max_results", "min_year", "investigation_context"}))
+        return fetch_pubmed_advanced(**_filter(fn_args, {"query_term", "max_results", "min_year", "investigation_context", "surveillance_mode"}))
     if fn_name == "search_drug_class_effects":
         return search_drug_class_effects(**_filter(fn_args, {"drug_class", "adverse_event", "max_results", "min_year", "investigation_context"}))
     if fn_name == "check_past_signals":
