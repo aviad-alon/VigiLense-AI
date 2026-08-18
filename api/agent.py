@@ -445,12 +445,17 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
         # ** LLMod.ai note: restore tool_choice="auto" before submission if LLMod doesn't support "required" **
-        response = llm_client.chat.completions.create(
-            model       = CHAT_MODEL,
-            messages    = messages,
-            tools       = TOOLS,
-            tool_choice = "required",   # force tool call every turn — prevents text-only early exit
-        )
+        try:
+            response = llm_client.chat.completions.create(
+                model       = CHAT_MODEL,
+                messages    = messages,
+                tools       = TOOLS,
+                tool_choice = "required",   # force tool call every turn — prevents text-only early exit
+                timeout     = 60,
+            )
+        except Exception as llm_exc:
+            print(f"[ReAct loop — LLM call failed] {llm_exc}")
+            break   # exit loop; fallback report generated below
         last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 

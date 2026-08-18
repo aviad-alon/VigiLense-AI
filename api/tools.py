@@ -20,6 +20,7 @@ Tools:
 
 import json
 import math
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 import requests
@@ -789,6 +790,9 @@ PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcg
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
 SCREENING_BATCH_SIZE  = 50   # articles per LLM screening call
 MAX_PUBMED_SCREEN     = 50   # cap on articles fetched when screening is active
+MAX_PHASE2_ARTICLES   = 15   # max articles sent to Phase 2 to avoid rate-limit cascade
+LLM_CALL_TIMEOUT      = 45   # seconds — per LLM API call
+PHASE2_THROTTLE_SEC   = 0.4  # seconds between Phase 2 calls to avoid 429 rate limit
 
 
 def _screen_articles_llm(
@@ -857,6 +861,7 @@ def _screen_articles_llm(
                 model=CHAT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
+                timeout=45,
             )
             raw = resp.choices[0].message.content.strip()
             if "```" in raw:
@@ -870,10 +875,14 @@ def _screen_articles_llm(
             }
             relevant.extend(a for a in batch if a.get("pmid") in relevant_pmids)
         except Exception as exc:
+            # fail-closed: skip batch on error rather than dumping all articles to Phase 2
             print(f"[PubMed screening error — batch {batch_start // SCREENING_BATCH_SIZE + 1}] {exc}")
-            relevant.extend(batch)  # fail-open
 
     # ── Phase 2: Per-article isolated summary extraction ─────────────────────
+    # Cap to avoid rate-limit cascade: take highest-relevance articles first
+    if len(relevant) > MAX_PHASE2_ARTICLES:
+        print(f"[PubMed screening] Phase 2 capped: {len(relevant)} → {MAX_PHASE2_ARTICLES} articles")
+        relevant = relevant[:MAX_PHASE2_ARTICLES]
     _extract_article_summaries(relevant, investigation_context)
 
     # ── Post-Phase-2 filter: drop articles where Phase 2 found no drug-specific data ──
@@ -906,7 +915,10 @@ def _extract_article_summaries(
     if not articles or not llm_client:
         return
 
-    for art in articles:
+    for i, art in enumerate(articles):
+        if i > 0:
+            time.sleep(PHASE2_THROTTLE_SEC)   # avoid 429 rate-limit from rapid serial calls
+
         pmid     = art.get("pmid", "")
         title    = art.get("title", "Unknown title")
         abstract = (art.get("abstract") or "")[:2000]
@@ -943,6 +955,7 @@ def _extract_article_summaries(
                 model=CHAT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
+                timeout=LLM_CALL_TIMEOUT,
             )
             raw = resp.choices[0].message.content.strip()
             if "```" in raw:
