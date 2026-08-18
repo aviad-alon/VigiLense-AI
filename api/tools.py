@@ -551,6 +551,7 @@ TOOLS = [
                     "drug_name",
                     "adverse_event",
                     "is_significant",
+                    "signal_level",
                     "summary_findings",
                     "recommendations"
                 ]
