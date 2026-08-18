@@ -105,7 +105,8 @@ TOOLS = [
             "name": "fetch_fda_adverse_events",
             "description": (
                 "Query OpenFDA FAERS to retrieve real-world case counts (a, b, c, d) for a "
-                "drug-event pair. Call ONLY when PubMed literature has no explicit 2×2 counts. "
+                "drug-event pair. Call ONLY when PubMed literature has no explicit 2×2 counts — "
+                "do NOT call if you already have counts from a published article. "
                 "Pass returned values directly to `calculate_disproportionality`."
             ),
             "parameters": {
@@ -151,7 +152,10 @@ TOOLS = [
                             "PubMed boolean query — strict grouped syntax required. "
                             "Format: '\"drug_name\" AND (\"ae1\" OR \"ae2\")'. "
                             "Multi-word terms MUST be double-quoted. Drug name MUST be included. "
-                            "Without parentheses, PubMed applies OR globally → 400K+ unrelated results."
+                            "Without parentheses, PubMed applies OR globally → 400K+ unrelated results. "
+                            "Good: '\"warfarin\" AND (\"bleeding\" OR \"hemorrhage\" OR \"gastrointestinal hemorrhage\")'. "
+                            "Good: '\"sertraline\" AND (\"QTc prolongation\" OR \"cardiac arrhythmia\" OR \"torsades de pointes\")'. "
+                            "BAD: 'warfarin bleeding OR hemorrhage' — no grouping, explodes to 400K+ results."
                         )
                     },
                     "max_results": {
@@ -181,9 +185,12 @@ TOOLS = [
         "function": {
             "name": "search_drug_class_effects",
             "description": (
-                "Search PubMed for literature regarding the entire pharmacological class "
-                "to differentiate between a known class effect and a novel drug-specific "
-                "safety signal. Call this after get_drug_profile to use the correct class name."
+                "Search PubMed for class-level literature to determine whether the observed AE "
+                "is a known class effect or a novel drug-specific signal. "
+                "Use when you need to contextualize drug-specific findings — e.g., to assess "
+                "whether bleeding with Warfarin is common to all anticoagulants or uniquely drug-specific. "
+                "Skip only if class comparison clearly adds no value to the investigation. "
+                "Always call after get_drug_profile to use the correct class name."
             ),
             "parameters": {
                 "type": "object",
@@ -256,7 +263,9 @@ TOOLS = [
             "description": (
                 "Search the internal Pinecone vector DB (FDA drug labels and safety documents) "
                 "to check whether a specific AE is already documented. "
-                "Call once per distinct finding discovered in literature — not just once globally."
+                "Call once per distinct finding discovered in literature — not just once globally. "
+                "Example: you find 'hepatotoxicity' in PubMed → call query_knowledge_base('Warfarin', 'hepatotoxicity'). "
+                "No chunks returned → may be a novel signal. Chunks returned → already documented, not novel, move on."
             ),
             "parameters": {
                 "type": "object",
@@ -386,14 +395,14 @@ TOOLS = [
                             "This drives the master report header and subject table — set it carefully:\n\n"
                             "'significant' — FAERS ROR ≥ 2.0 with lower CI > 1.0. "
                             "The statistical threshold is met and constitutes a confirmed signal.\n\n"
-                            "'potential'   — FAERS is negative or not calculable, BUT Tier 1 literature exists "
-                            "with novel, actionable case reports or clinical findings NOT already fully documented "
+                            "'potential'   — FAERS is negative or not calculable, BUT actionable literature exists "
+                            "with novel case reports or clinical findings NOT already fully documented "
                             "in the FDA label / internal KB for this specific adverse event. "
                             "Use this whenever literature evidence warrants safety team review — "
                             "even a single unlabeled case report qualifies.\n\n"
                             "'none'        — Use ONLY when BOTH: (a) FAERS shows no disproportionality, "
-                            "AND (b) no novel unlabeled Tier 1 literature was found. "
-                            "If any Tier 1 novel finding exists, do NOT use 'none'."
+                            "AND (b) no novel unlabeled actionable literature was found. "
+                            "If any novel finding exists, do NOT use 'none'."
                         )
                     },
                     "summary_findings": {
@@ -435,9 +444,9 @@ TOOLS = [
                     "article_summaries": {
                         "type": "array",
                         "description": (
-                            "INCLUDE ALL articles returned by fetch_pubmed_advanced or search_drug_class_effects. "
-                            "Every returned article has passed LLM screening — do NOT skip any. "
-                            "ONLY use PMIDs actually returned by those tool calls — do NOT fabricate."
+                            "All articles returned by PubMed tools have already passed a strict per-article gate "
+                            "— only those with direct patient-level AE evidence are included. "
+                            "Include ALL returned articles here. ONLY use PMIDs actually returned by tool calls — do NOT fabricate."
                         ),
                         "items": {
                             "type": "object",
@@ -446,33 +455,18 @@ TOOLS = [
                                     "type": "string",
                                     "description": "The PMID exactly as returned by the PubMed tool."
                                 },
-                                "tier": {
-                                    "type": "string",
-                                    "enum": ["1", "2"],
-                                    "description": (
-                                        "Tier classification controlling how this article is rendered in the report:\n"
-                                        "'1' = ACTIONABLE — article directly reports the investigated adverse event via: "
-                                        "case report/series with patient cases; clinical trial/cohort with statistically significant risk or incidence; "
-                                        "or novel safety alert. → Full entry rendered in report.\n"
-                                        "'2' = BACKGROUND — general review, mechanistic/animal study, PK/PD paper, "
-                                        "or any study with NO direct cases of the target adverse event. "
-                                        "→ Omitted from individual entries; grouped into a single note. "
-                                        "Default to '1' if uncertain."
-                                    )
-                                },
                                 "relevance_summary": {
                                     "type": "string",
                                     "description": (
-                                        "Written according to tier:\n"
-                                        "Tier 1: 1-2 tight sentences stating case count, relative risk, or clinical safety outcome. "
-                                        "No titles/author names. Example: 'Case series (n=3, males 45–62): sildenafil 50–100 mg "
-                                        "associated with acute NAION onset within 24h; partial visual recovery in 2/3 cases.'\n"
-                                        "Tier 2: Single line only: 'No [target AE] reported; [one-sentence mechanistic context].' "
-                                        "Example: 'No NAION reported; supports systemic hypotension as plausible mechanism via PDE5 vasodilation.'"
+                                        "1-3 tight sentences: case count or risk metric, dose/timing if known, clinical outcome. "
+                                        "No titles or author names. "
+                                        "Example: 'Case series (n=3, males 45–62): sildenafil 50–100 mg "
+                                        "associated with acute NAION onset within 24h; partial visual recovery in 2/3 cases.' "
+                                        "STRICT ISOLATION: derived SOLELY from that article's abstract — never borrow from another."
                                     )
                                 }
                             },
-                            "required": ["pmid", "tier", "relevance_summary"]
+                            "required": ["pmid", "relevance_summary"]
                         }
                     },
                     "case_counts": {
@@ -777,8 +771,8 @@ def calculate_disproportionality(
 PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
-SCREENING_BATCH_SIZE  = 50   # articles per LLM screening call
-MAX_PUBMED_SCREEN     = 50   # cap on articles fetched when screening is active
+SCREENING_BATCH_SIZE  = 30   # articles per LLM screening call
+MAX_PUBMED_SCREEN     = 30   # cap on articles fetched when screening is active
 
 
 def _screen_articles_llm(
@@ -863,10 +857,10 @@ def _screen_articles_llm(
             print(f"[PubMed screening error — batch {batch_start // SCREENING_BATCH_SIZE + 1}] {exc}")
             relevant.extend(batch)  # fail-open
 
-    # ── Phase 2: Per-article isolated tier + summary extraction ──────────────
+    # ── Phase 2: Per-article gate + summary extraction ───────────────────────
     _extract_article_summaries(relevant, investigation_context)
 
-    return relevant
+    return [a for a in relevant if a.get("pv_include") is True]
 
 
 def _extract_article_summaries(
@@ -874,18 +868,16 @@ def _extract_article_summaries(
     investigation_context: str,
 ) -> None:
     """
-    Extract tier and relevance_summary for each article INDIVIDUALLY.
+    Gate and summarize each article INDIVIDUALLY.
 
-    One dedicated LLM call per article — the model sees ONLY that article's
-    abstract, title, and PMID. This architectural isolation makes cross-
-    contamination between articles structurally impossible.
+    One LLM call per article — the model sees ONLY that article's abstract,
+    title, and PMID. Structural isolation makes cross-contamination impossible.
 
-    Mutates each article dict in-place:
-        art["pv_tier"]    — "1" (actionable) or "2" (background)
-        art["pv_summary"] — concise analytical extraction matching the tier format
+    Decision:
+        include=false → art["pv_include"] = False, no summary generated.
+        include=true  → art["pv_include"] = True, art["pv_summary"] set.
 
-    Failures are silent and non-blocking: an article without pv_tier/pv_summary
-    falls back to the LLM-generated summary in generate_pharmacovigilance_report.
+    Only articles with pv_include=True are returned to the agent.
     """
     if not articles or not llm_client:
         return
@@ -893,50 +885,44 @@ def _extract_article_summaries(
     for art in articles:
         pmid     = art.get("pmid", "")
         title    = art.get("title", "Unknown title")
-        abstract = (art.get("abstract") or "")[:2000]  # full abstract, capped at 2 k chars
+        abstract = (art.get("abstract") or "")[:2000]
 
         prompt = (
             "You are a Pharmacovigilance Literature Analyst.\n\n"
             f"Investigation Context:\n{investigation_context}\n\n"
-            "Analyze the SINGLE article delimited below and provide:\n"
-            "  1. tier: '1' (actionable) or '2' (background)\n"
-            "  2. summary: a concise analytical extraction\n\n"
-            "TIER CLASSIFICATION:\n"
-            "  '1' = ACTIONABLE — use when the article provides:\n"
-            "    - A direct case report or case series with actual patient occurrences of the target AE.\n"
-            "    - A clinical trial or cohort with statistically significant AE incidence or risk.\n"
-            "    - A novel safety alert or pharmacovigilance database study with case counts.\n"
-            "  '2' = BACKGROUND — use when the article is:\n"
-            "    - A general narrative review with no original case data.\n"
-            "    - A mechanistic, animal, or in-vitro study with no patient AE reports.\n"
-            "    - A PK/PD study not reporting the target AE.\n"
-            "    - A study explicitly concluding no occurrences of the target AE.\n\n"
-            "SUMMARY FORMAT:\n"
-            "  Tier 1: 1-2 tight sentences — case count or risk metric, dose/timing if known, "
-            "clinical outcome. No titles or author names.\n"
-            "    Example: 'Case series (n=3, males 45-62 yrs): drug 50-100 mg associated with "
-            "AE onset within 24h of ingestion; partial recovery in 2/3 cases.'\n"
-            "  Tier 2: Single line only: 'No [target AE] reported; [one-sentence mechanistic "
-            "or contextual note].'\n"
-            "    Example: 'No NAION reported; supports systemic hypotension as a plausible "
-            "mechanism via PDE5-mediated vasodilation.'\n\n"
+            "Review the SINGLE article below and decide:\n"
+            "  — INCLUDE (include: true) if it contains DIRECT patient-level evidence "
+            "of the investigated adverse event:\n"
+            "      • A case report or case series with actual patient occurrences.\n"
+            "      • A clinical trial or observational cohort reporting AE incidence or risk.\n"
+            "      • A pharmacovigilance database study (FAERS, VigiBase) with case counts.\n"
+            "  — EXCLUDE (include: false) if it is:\n"
+            "      • A narrative review, meta-analysis, or editorial with no original case data.\n"
+            "      • A mechanistic, animal, or in-vitro study.\n"
+            "      • A PK/PD study not reporting the target AE in patients.\n"
+            "      • A study explicitly concluding the AE did not occur.\n\n"
+            "IF EXCLUDED → respond with ONLY: {\"include\": false}\n"
+            "Do NOT write a summary for excluded articles.\n\n"
+            "IF INCLUDED → respond with:\n"
+            "{\"include\": true, \"summary\": \"<your summary here>\"}\n\n"
+            "SUMMARY REQUIREMENTS (included articles only):\n"
+            "  - 1-3 sentences capturing the key findings that will appear in the final "
+            "pharmacovigilance report.\n"
+            "  - Include: patient count (n=X), relevant demographics if stated, "
+            "dose/timing if known, clinical outcome.\n"
+            "  - Example: 'Case series (n=3, males 45-62 yrs): drug 50-100 mg associated "
+            "with AE onset within 24h; partial recovery in 2/3 cases.'\n\n"
             "=== CRITICAL ISOLATION RULE ===\n"
-            "Your tier and summary must be derived EXCLUSIVELY from the single abstract below.\n"
+            "Your decision and summary must be derived EXCLUSIVELY from the single abstract below.\n"
             "NEVER include information from any other source, memory, or prior article.\n"
-            "TITLE-TO-FINDING VALIDATION — mandatory before writing the summary:\n"
-            "  - If the title describes an animal, preclinical, or mechanistic study:\n"
-            "    → Assign Tier '2'. DO NOT write patient case details (n=X, age, sex, dose).\n"
-            "  - If the title says 'case report' or 'case series':\n"
-            "    → Assign Tier '1'. Include ONLY case details explicitly stated in THIS abstract.\n"
-            "SELF-CHECK: Ask yourself: 'Does my summary contain ANY fact not present verbatim\n"
-            "in the abstract below?' If yes — remove it before responding.\n"
+            "SELF-CHECK before responding: 'Does my summary contain ANY fact not present "
+            "verbatim in the abstract below?' If yes — remove it.\n"
             "================================\n\n"
             f"=== ARTICLE | PMID: {pmid} ===\n"
             f"Title: {title}\n"
             f"Abstract: {abstract}\n"
             f"=== END ARTICLE | PMID: {pmid} ===\n\n"
-            "Respond with JSON only (no explanation, no markdown fences):\n"
-            '{"tier": "1" or "2", "summary": "your extraction here"}'
+            "Respond with JSON only (no explanation, no markdown fences)."
         )
 
         try:
@@ -952,14 +938,18 @@ def _extract_article_summaries(
                     raw = raw[4:].strip()
             extracted = json.loads(raw)
             if isinstance(extracted, dict):
-                if extracted.get("tier") in ("1", "2"):
-                    art["pv_tier"] = extracted["tier"]
-                if isinstance(extracted.get("summary"), str) and extracted["summary"].strip():
-                    art["pv_summary"] = extracted["summary"].strip()
+                include = extracted.get("include")
+                if include is True:
+                    art["pv_include"] = True
+                    summary = extracted.get("summary", "")
+                    if isinstance(summary, str) and summary.strip():
+                        art["pv_summary"] = summary.strip()
+                else:
+                    art["pv_include"] = False
         except Exception as exc:
-            print(f"[Article summary extraction error — PMID {pmid}] {exc}")
-            # Fail gracefully — article remains without pv_tier/pv_summary;
-            # agent.py will fall back to the LLM-provided summary at report time.
+            print(f"[Article gate error — PMID {pmid}] {exc}")
+            # Fail-open: include the article so no signal is silently dropped.
+            art["pv_include"] = True
 
 
 def _pubmed_fetch(term: str, max_results: int, min_year: int = 2020) -> tuple[list[dict], dict]:

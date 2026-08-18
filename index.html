@@ -103,6 +103,25 @@
     .chevron { transition:transform 0.3s ease; }
     .chevron.open { transform:rotate(180deg); }
 
+    /* Focus section — revealed after drug selection */
+    .focus-section {
+      max-height: 0;
+      overflow: hidden;
+      opacity: 0;
+      transition: max-height 0.4s ease, opacity 0.35s ease;
+    }
+    .focus-section.visible {
+      max-height: 300px;
+      opacity: 1;
+    }
+
+    /* Run button — disabled state */
+    #run-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
     /* Markdown report styles */
     .prose-report h1 { font-size:1.15rem; font-weight:700; color:#e2e8f0; margin:0 0 0.75rem; font-family:'Figtree',sans-serif; }
     .prose-report h2 { font-size:0.95rem; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:0.07em; margin:1.2rem 0 0.5rem; font-family:'Figtree',sans-serif; border-bottom:1px solid rgba(255,255,255,0.07); padding-bottom:0.3rem; }
@@ -295,12 +314,12 @@
     <section class="glass rounded-2xl p-6 sm:p-8 mb-6" aria-label="Drug selection">
 
       <!-- Section header -->
-      <p class="font-heading font-bold text-slate-100 text-sm uppercase tracking-widest mb-4">
-        Select a drug to monitor from the company portfolio or write your own query
+      <p class="font-heading font-bold text-slate-100 text-sm uppercase tracking-widest mb-5">
+        Select a drug to monitor from the company portfolio
       </p>
 
       <!-- Drug buttons grid — 4 per row, 2 rows -->
-      <div id="drug-grid" class="grid grid-cols-4 gap-3 mb-6">
+      <div id="drug-grid" class="grid grid-cols-4 gap-3 mb-2">
         <button class="drug-btn" id="btn-Atorvastatin"  onclick="selectDrug('Atorvastatin')">Atorvastatin</button>
         <button class="drug-btn" id="btn-Metformin"     onclick="selectDrug('Metformin')">Metformin</button>
         <button class="drug-btn" id="btn-Warfarin"      onclick="selectDrug('Warfarin')">Warfarin</button>
@@ -311,41 +330,48 @@
         <button class="drug-btn" id="btn-Adalimumab"    onclick="selectDrug('Adalimumab')">Adalimumab</button>
       </div>
 
-      <!-- Free-text query -->
-      <div class="prompt-wrapper mb-6">
-        <textarea
-          id="prompt"
-          rows="3"
-          placeholder="e.g. Analyze hepatotoxicity signals for Metformin based on recent literature and FAERS data..."
-          class="block w-full px-4 py-3 text-slate-200 placeholder-slate-500 font-body text-sm leading-relaxed resize-none focus:ring-0 transition-all"
-          aria-label="Pharmacovigilance query"
-        ></textarea>
-      </div>
+      <!-- Focus section — revealed after drug selection -->
+      <div id="focus-section" class="focus-section">
+        <div class="pt-5">
 
-      <!-- Portfolio notice -->
-      <p class="text-xs text-slate-500 font-body mb-5 text-center">
-        Notice: This system is designed to investigate adverse effects of drugs from the company's licensed portfolio only.
-      </p>
+          <!-- Selected drug label -->
+          <div class="flex items-center gap-2 mb-4">
+            <div class="w-1.5 h-1.5 rounded-full bg-secondary"></div>
+            <span class="text-xs text-slate-500 font-body">Investigating:</span>
+            <span id="selected-name" class="font-heading font-semibold text-secondary text-sm"></span>
+          </div>
 
-      <!-- Run Agent – centred -->
-      <div class="flex justify-center mb-4">
-        <button id="run-btn" onclick="runAgent()"
-                class="px-10 py-3 rounded-xl font-heading font-semibold text-white text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-2 glow-primary"
-                style="background:linear-gradient(135deg,#0891B2,#0e7490);"
-                onmouseover="this.style.background='linear-gradient(135deg,#0e7490,#0891B2)'"
-                onmouseout="this.style.background='linear-gradient(135deg,#0891B2,#0e7490)'"
-                aria-label="Run pharmacovigilance agent">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/>
-          </svg>
-          Run Agent
-        </button>
-      </div>
+          <!-- Focus input -->
+          <label class="block text-xs font-heading font-semibold text-slate-400 uppercase tracking-widest mb-2">
+            Is there a specific adverse event or area you want to focus on?
+            <span class="text-slate-600 normal-case font-normal ml-1">(optional)</span>
+          </label>
+          <div class="prompt-wrapper mb-5">
+            <textarea
+              id="focus-input"
+              rows="2"
+              placeholder="e.g. liver toxicity, cardiac events, bleeding risk in elderly patients..."
+              class="block w-full px-4 py-3 text-slate-200 placeholder-slate-500 font-body text-sm leading-relaxed resize-none focus:ring-0 transition-all"
+              aria-label="Optional focus area"
+            ></textarea>
+          </div>
 
-      <!-- Selected drug indicator — below Run Agent -->
-      <div id="selected-indicator" class="hidden mt-4 flex items-center justify-center gap-2 text-sm">
-        <span class="text-slate-500">Monitoring:</span>
-        <span id="selected-name" class="font-heading font-semibold text-secondary"></span>
+          <!-- Start Investigation button -->
+          <div class="flex justify-center">
+            <button id="run-btn" onclick="runAgent()"
+                    class="px-10 py-3 rounded-xl font-heading font-semibold text-white text-sm uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-2 glow-primary"
+                    style="background:linear-gradient(135deg,#0891B2,#0e7490);"
+                    onmouseover="this.style.background='linear-gradient(135deg,#0e7490,#0891B2)'"
+                    onmouseout="this.style.background='linear-gradient(135deg,#0891B2,#0e7490)'"
+                    aria-label="Start pharmacovigilance investigation">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/>
+              </svg>
+              Start Investigation
+            </button>
+          </div>
+
+        </div>
       </div>
 
       <!-- Recent Investigations toggle -->
@@ -423,34 +449,31 @@
   </div>
 
   <script>
-    const DRUG_QUERIES = {
-      'Atorvastatin':  'Analyze recent PubMed literature on Atorvastatin adverse effects and identify any novel safety signals not in our database.',
-      'Metformin':     'Review the latest PubMed findings on Metformin side effects, especially in elderly patients, and flag any emerging risks.',
-      'Warfarin':      'Search recent PubMed abstracts for novel Warfarin drug interactions or bleeding risk signals beyond known data.',
-      'Sildenafil':    'Analyze recent PubMed literature on Sildenafil adverse cardiovascular effects and flag any novel safety signals.',
-      'Methotrexate':  'Review recent PubMed findings on Methotrexate toxicity, including hepatotoxicity and pulmonary risks, for novel signals.',
-      'Lisinopril':    'Search recent PubMed abstracts on Lisinopril adverse effects and identify any novel angioedema or renal risk signals.',
-      'Sertraline':    'Analyze recent PubMed literature on Sertraline adverse effects in adolescents and flag any novel safety concerns.',
-      'Adalimumab':    'Review the latest PubMed findings on Adalimumab serious infections and malignancy risks for novel safety signals.',
-    };
-
     let selectedDrug = null;
 
     function selectDrug(name) {
-      // Deactivate previous
+      // Deactivate previous button
       if (selectedDrug) {
         const prev = document.getElementById('btn-' + selectedDrug);
         if (prev) prev.classList.remove('active');
       }
       selectedDrug = name;
-      // Activate new button
+
+      // Activate selected button
       const btn = document.getElementById('btn-' + name);
       if (btn) btn.classList.add('active');
-      // Populate textarea with preset query
-      document.getElementById('prompt').value = DRUG_QUERIES[name] || `Analyze recent PubMed literature on ${name} for novel adverse effects.`;
-      // Update indicator
+
+      // Update selected drug label
       document.getElementById('selected-name').textContent = name;
-      document.getElementById('selected-indicator').classList.remove('hidden');
+
+      // Reveal focus section with animation
+      const focusSection = document.getElementById('focus-section');
+      focusSection.classList.add('visible');
+
+      // Focus the optional input after animation
+      setTimeout(() => {
+        document.getElementById('focus-input').focus();
+      }, 420);
     }
 
     function showLoading(show) {
@@ -667,8 +690,12 @@
     // ─────────────────────────────────────────────────────────────────────────
 
     async function runAgent() {
-      const prompt = document.getElementById('prompt').value.trim();
-      if (!prompt) { document.getElementById('prompt').focus(); return; }
+      if (!selectedDrug) return;
+
+      const focus = document.getElementById('focus-input').value.trim();
+      const prompt = focus
+        ? `${selectedDrug} — focus on ${focus}`
+        : `${selectedDrug}`;
 
       hideError();
       document.getElementById('results').classList.add('hidden');

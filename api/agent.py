@@ -22,46 +22,24 @@ def _build_literature_section(
     articles: list,
     summaries: dict | None = None,
     audit_entries: list | None = None,
-    tiers: dict | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
-    Render a dual-section literature block from real PubMed tool results.
+    Render a literature block from real PubMed tool results.
+    All articles have passed the Phase 2 gate — only actionable articles with direct patient evidence.
     All metadata (PMID, title, authors, journal, URL) is 100% deterministic — the LLM never touches it.
-
-    Section 1 — Main view (Actionable):
-        Tier 1 articles (case reports, trials, safety alerts) in concise 2-line bullet format,
-        numbered with their UNIFIED continuous index.
-
-    Section 2 — Collapsible <details> block (All screened):
-        ALL screened articles numbered 1..N with unified continuous index.
-        - Tier 1 (1..K):   repeated with full entry (title + key finding)
-        - Tier 2 (K+1..N): 1-line summary note per article (background / no direct AE data)
 
     Returns:
         section_text    — the formatted Markdown string
-        pmid_to_number  — mapping of ALL PMIDs → continuous article number (1-indexed)
+        pmid_to_number  — mapping of PMIDs → article number (1-indexed)
     """
     summaries = summaries or {}
-    tiers     = tiers     or {}
 
-    # Articles that have a summary (either pre-computed or LLM-provided)
-    relevant = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
+    # Articles with pre-computed summaries (passed Phase 2 gate)
+    included   = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
+    no_summary = [a for a in articles if a.get("pmid") and a["pmid"] not in summaries]
 
-    # Split by tier (default = "1" if not specified)
-    tier1 = [a for a in relevant if tiers.get(a["pmid"], "1") == "1"]
-    tier2 = [a for a in relevant if tiers.get(a["pmid"], "1") == "2"]
-
-    # Articles that passed screening but have no summary (Phase 2 failure edge-case)
-    summarized_pmids = {a["pmid"] for a in relevant}
-    no_summary = [a for a in articles if a.get("pmid") and a["pmid"] not in summarized_pmids]
-
-    # ── Unified continuous numbering: Tier 1 first (1..K), then Tier 2, then no-summary ──
-    all_ordered = tier1 + tier2 + no_summary
+    all_ordered = included + no_summary
     pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(all_ordered)}
-
-    total_unique_screened = len(articles)
-    total_included        = len(relevant)
-    total_excluded_deep   = total_unique_screened - total_included
 
     parts = []
 
@@ -80,21 +58,15 @@ def _build_literature_section(
             )
             audit_lines.append(f"- `{query}` — {dr} — {coverage}")
 
-        if total_unique_screened > 0:
-            excl_note = (
-                f" (excluded during deep screening: {total_excluded_deep}"
-                " — e.g., non-clinical, no direct AE data)"
-                if total_excluded_deep > 0 else ""
-            )
+        if all_ordered:
             audit_lines.append(
-                f"\n**Pipeline summary:** {total_unique_screened} unique articles after LLM screening"
-                f" → **{total_included} included** "
-                f"({len(tier1)} actionable / {len(tier2)} background){excl_note}"
+                f"\n**Pipeline summary:** {len(articles)} screened"
+                f" → **{len(included)} included** (direct patient-level AE evidence)"
             )
         parts.append("\n".join(audit_lines))
 
-    # ── Section 1: Actionable literature — main view ──────────────────────────
-    if not tier1:
+    # ── Actionable articles ───────────────────────────────────────────────────
+    if not included:
         parts.append(
             "*No actionable articles with direct adverse event reports were identified "
             "in the retrieved literature.*"
@@ -102,10 +74,10 @@ def _build_literature_section(
     else:
         parts.append(
             f"**Actionable Literature — Direct AE Evidence "
-            f"({len(tier1)} article{'s' if len(tier1) != 1 else ''})**"
+            f"({len(included)} article{'s' if len(included) != 1 else ''})**"
         )
         items = []
-        for art in tier1:
+        for art in included:
             pmid       = art.get("pmid", "")
             n          = pmid_to_number[pmid]
             title      = (art.get("title") or "Unknown title").strip()
@@ -123,53 +95,6 @@ def _build_literature_section(
             items.append(line)
 
         parts.append("\n\n".join(items))
-
-    # ── Section 2: Collapsible — all screened articles ────────────────────────
-    n_all = len(all_ordered)
-    if n_all > 0:
-        def _art_header(art: dict) -> str:
-            pmid       = art.get("pmid", "")
-            n          = pmid_to_number.get(pmid, "?")
-            title      = (art.get("title") or "Unknown title").strip()
-            authors    = art.get("authors") or []
-            pubdate    = (art.get("pubdate") or "").strip()
-            journal    = (art.get("source") or "").strip()
-            author_str = (
-                f"{authors[0]} et al." if len(authors) > 1
-                else (authors[0] if authors else "Unknown")
-            )
-            link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
-            return f"**{n}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
-
-        collapsible_items: list[str] = []
-
-        # Tier 1 in collapsible — full entry (mirrors main view)
-        for art in tier1:
-            pmid = art.get("pmid", "")
-            collapsible_items.append(
-                _art_header(art) + f"\n   **Key Finding:** {summaries[pmid]}"
-            )
-
-        # Tier 2 in collapsible — 1-line summary note
-        for art in tier2:
-            pmid         = art.get("pmid", "")
-            summary_note = summaries.get(pmid, "No direct AE data.")
-            collapsible_items.append(
-                _art_header(art) + f"\n   *{summary_note}*"
-            )
-
-        # Articles with no summary — title + PMID only
-        for art in no_summary:
-            collapsible_items.append(_art_header(art))
-
-        collapsible_block = (
-            f"<details>\n"
-            f"<summary>Click to expand all {n_all} screened PubMed articles</summary>\n"
-            "\n"
-            + "\n\n".join(collapsible_items)
-            + "\n\n</details>"
-        )
-        parts.append(collapsible_block)
 
     return "\n\n".join(parts), pmid_to_number
 
@@ -212,7 +137,9 @@ TOOLBOX GUIDANCE:
 
 3. `fetch_pubmed_advanced` / `search_drug_class_effects` — Always include drug name in query_term. Always pass investigation_context. Use strict boolean syntax:
    Format: `"drug_name" AND ("ae1" OR "ae2")` — all multi-word terms double-quoted.
-   QUERY SCOPE RULE: First call MUST use the EXACT AE term from the user query. Expand only if count=0.
+   QUERY SCOPE RULE:
+   - If the user specified a focus area (e.g. "Warfarin — focus on bleeding risk"): first call MUST use the EXACT focus term. Expand only if count=0.
+   - If no focus was specified (e.g. "Warfarin"): perform a broad scan for the most clinically significant known AEs of this drug class. Use 3–5 relevant AE terms based on the drug profile.
 
 4. `check_past_signals` — Avoid re-escalating previously discarded signals.
 
@@ -238,13 +165,11 @@ FDA LABEL CROSS-MAPPING:
 
 DEDUPLICATION: Duplicate = identical PMID or identical title only. Different papers on the same topic are NOT duplicates. Never write "(Duplicate...)" in any relevance_summary.
 
-TWO-TIER ARTICLE CLASSIFICATION (`tier` required on every article):
-Tier "1" — ACTIONABLE: Case report/series, clinical trial, or safety DB study with direct patient AE occurrences. Default to "1" if uncertain.
-Tier "2" — BACKGROUND: Reviews, mechanistic/animal/in-vitro, PK/PD not reporting target AE, or studies concluding no occurrences.
-
-relevance_summary format:
-Tier 1 → 1-2 sentences: case count, dose/timing, outcome. No titles or author names.
-Tier 2 → Single line: "No [target AE] reported; [one-sentence mechanistic note]."
+ARTICLE SUMMARIES (`article_summaries`):
+All articles returned by PubMed tools have already passed a strict per-article gate — only those with direct patient-level AE evidence are included (case reports, trials, pharmacovigilance DB studies).
+Provide pmid + relevance_summary per article. 1-3 sentences: case count, dose/timing, clinical outcome. No titles or author names.
+STRICT ISOLATED EXTRACTION: Every relevance_summary derives SOLELY from that article's abstract. Never borrow details from another abstract.
+SELF-CHECK: Confirm no summary contains facts from a different PMID's abstract before submitting.
 
 AUTONOMOUS RULES:
 1. State reasoning (Thought) before every tool call.
@@ -268,12 +193,6 @@ Label-consistent findings related to the investigated AE only. No unrelated warn
 
 ### Signal Assessment
 Evidence quality, signal strength, confidence — scoped exclusively to the investigated AE.
-
-ARTICLE SUMMARIES (`article_summaries`):
-Include ALL articles returned by PubMed tools. Provide pmid, tier, relevance_summary per article.
-STRICT ISOLATED EXTRACTION: Every relevance_summary derives SOLELY from that article's abstract. Never borrow details from another abstract.
-TITLE VALIDATION: Animal/in-vitro/mechanistic title → Tier 2, no patient data. "Case report/series" → Tier 1, only details from THAT abstract.
-SELF-CHECK: Confirm no summary contains facts from a different PMID's abstract before submitting.
 
 SOURCE ATTRIBUTION: disproportionality_source = "OpenFDA FAERS Database" or "Literature / PubMed (PMID: X)".
 
@@ -316,12 +235,10 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     collected_articles: list[dict] = []    # real PubMed articles from tool results
     valid_pmids: set[str] = set()          # whitelist for PMID scrubber
     pubmed_audit_entries: list[dict] = []  # audit metadata from each PubMed tool call
-    # Pre-computed tier + summary from Phase 2 isolated extraction in tools.py.
-    # These are used with PRIORITY over LLM-batch-generated article_summaries to
-    # eliminate cross-contamination: each was extracted from a single article's
-    # abstract in an isolated LLM call with no other articles in context.
+    # Pre-computed summaries from Phase 2 gate extraction in tools.py.
+    # Each was extracted in an isolated single-article LLM call — zero cross-contamination.
+    # Used with PRIORITY over LLM-batch-generated article_summaries.
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
-    precomputed_tiers: dict[str, str] = {}       # pmid → pv_tier
     last_choice = None
     MAX_ITERATIONS = 20         # allows full investigation + report + submit
 
@@ -355,18 +272,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     for s in raw_summaries
                     if isinstance(s, dict) and s.get("pmid") in valid_pmids and s.get("relevance_summary")
                 }
-                llm_tiers_dict = {
-                    s["pmid"]: s.get("tier", "1")
-                    for s in raw_summaries
-                    if isinstance(s, dict) and s.get("pmid") in valid_pmids
-                }
                 # Pre-computed summaries override LLM-batch values.
                 # Each was extracted in an isolated single-article LLM call during
-                # Phase 2 screening → structurally immune to cross-contamination.
+                # Phase 2 gate → structurally immune to cross-contamination.
                 summaries_dict = {**llm_summaries_dict, **precomputed_summaries}
-                tiers_dict     = {**llm_tiers_dict,     **precomputed_tiers}
                 lit_section, pmid_to_number = _build_literature_section(
-                    collected_articles, summaries_dict, pubmed_audit_entries, tiers_dict
+                    collected_articles, summaries_dict, pubmed_audit_entries
                 )
                 fn_args["literature_section"] = lit_section
                 if "summary_findings" in fn_args:
@@ -395,12 +306,10 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     if pmid and pmid not in valid_pmids:
                         collected_articles.append(art)
                         valid_pmids.add(pmid)
-                        # Capture pre-computed tier + summary from Phase 2 isolated extraction.
-                        # These were generated one-article-at-a-time — zero cross-contamination.
+                        # Capture pre-computed summary from Phase 2 gate extraction.
+                        # Generated one-article-at-a-time — zero cross-contamination.
                         if art.get("pv_summary"):
                             precomputed_summaries[pmid] = art["pv_summary"]
-                        if art.get("pv_tier"):
-                            precomputed_tiers[pmid] = art["pv_tier"]
 
             # Capture the markdown report when generated
             if fn_name == "generate_pharmacovigilance_report":
