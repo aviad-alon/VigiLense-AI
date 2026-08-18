@@ -500,8 +500,18 @@ TOOLS = [
                     "recommendations": {
                         "type": "string",
                         "description": (
-                            "Regulatory action recommendation with rationale: "
-                            "e.g. 'Escalate to Safety Team' with reason, or 'Discard' with reason."
+                            "Regulatory action recommendation with rationale.\n\n"
+                            "⛔ SIGNAL-LEVEL BINDING RULE — strictly enforced by the system:\n"
+                            "  signal_level='significant' → MUST start with 'Escalate to Safety Team'. "
+                            "State the statistical threshold met and key supporting evidence.\n"
+                            "  signal_level='potential'   → MUST recommend escalation, targeted "
+                            "surveillance, or label evaluation. NEVER write phrases such as "
+                            "'no further action', 'no action required', or 'discard' — "
+                            "a Candidate Unlabeled Signal always requires regulatory follow-up "
+                            "regardless of FAERS ROR magnitude.\n"
+                            "  signal_level='none'        → Only then is 'No further action "
+                            "required' acceptable. Briefly state why (all AEs confirmed labeled, "
+                            "no severity discrepancy, FAERS below threshold)."
                         )
                     },
                     "disproportionality_source": {

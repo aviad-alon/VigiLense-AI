@@ -501,6 +501,75 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                             ev["ci_95"]             = match["ci_95"]
                             ev["faers_significant"] = match["faers_significant"]
 
+                # ── RC-1: Bucket 3 pre-report gate ────────────────────────────────
+                # Block the report if any Candidate Unlabeled Signal still has no ROR
+                # after the cache injection above. Enforces the mandatory FAERS step
+                # without relying on the LLM to self-enforce it.
+                _unquantified_b3 = [
+                    ev.get("event_name", "unknown")
+                    for ev in (fn_args.get("discovered_events") or [])
+                    if ev.get("bucket") == "potentially_unlabeled" and ev.get("ror") is None
+                ]
+                if _unquantified_b3:
+                    _blocked_result = {
+                        "blocked": True,
+                        "reason": (
+                            "Report blocked — Candidate Unlabeled Signals without FAERS ROR: "
+                            + ", ".join(_unquantified_b3)
+                            + ". Run fetch_fda_adverse_events → calculate_disproportionality for each first."
+                        ),
+                    }
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(_blocked_result),
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM ENFORCEMENT — PRE-REPORT GATE] "
+                            "generate_pharmacovigilance_report was BLOCKED. "
+                            "These Candidate Unlabeled Signals have no FAERS disproportionality data yet: "
+                            + ", ".join(_unquantified_b3)
+                            + ". Per ICH E2D protocol you MUST call "
+                            "fetch_fda_adverse_events → calculate_disproportionality "
+                            "for EACH of them before retrying the report. Do this NOW."
+                        ),
+                    })
+                    steps.append({
+                        "module":   "generate_pharmacovigilance_report [BLOCKED — Bucket 3 FAERS missing]",
+                        "prompt":   fn_args,
+                        "response": _blocked_result,
+                    })
+                    continue  # skip dispatch; outer loop re-prompts the LLM
+
+                # ── RC-3: Recommendation scrubber ─────────────────────────────────
+                # Catch signal_level / recommendations contradiction before it is
+                # rendered into the markdown. Overrides any "dismiss" language when
+                # the composite signal is potential or significant.
+                _sig_lvl = (fn_args.get("signal_level") or "none").lower()
+                _reco    = (fn_args.get("recommendations") or "").lower()
+                _dismiss_phrases = (
+                    "no further action", "no action required", "no action needed",
+                    "no action", "discard", "no novel signal",
+                )
+                if _sig_lvl in ("potential", "significant") and any(p in _reco for p in _dismiss_phrases):
+                    _prefix = (
+                        "Escalate to Safety Team — A statistically significant FAERS "
+                        "disproportionality signal (ROR ≥ 2.0, lower CI > 1.0)"
+                        if _sig_lvl == "significant"
+                        else "Escalate to Safety Team — A Candidate Unlabeled Signal"
+                    )
+                    fn_args["recommendations"] = (
+                        _prefix
+                        + " was identified in this investigation. Per ICH E2D / CIOMS VI, "
+                        "this finding cannot be dismissed without further regulatory review. "
+                        "Recommended actions: (1) initiate targeted literature surveillance "
+                        "for the identified adverse event; (2) evaluate adequacy of current "
+                        "label coverage; (3) consider signal validation study or "
+                        "pharmacoepidemiological analysis."
+                    )
+
             try:
                 result = dispatch(fn_name, fn_args)
             except Exception as exc:
