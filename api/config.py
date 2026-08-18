@@ -48,7 +48,7 @@ PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "vigilense")
 
 # ── TEMPORARY — OpenAI direct (remove before submission) ─────────────────────
 llm_client = None
-_api_key   = os.getenv("OPENAI_API_KEY_TEMP")
+_api_key   = os.getenv("OPENAI_API_KEY")
 if _api_key:
     llm_client = OpenAI(
         api_key = _api_key,
