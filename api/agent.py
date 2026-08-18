@@ -431,16 +431,17 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     for _ in range(MAX_ITERATIONS):
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
+        # ** LLMod.ai note: restore tool_choice="auto" before submission if LLMod doesn't support "required" **
         response = llm_client.chat.completions.create(
             model       = CHAT_MODEL,
             messages    = messages,
             tools       = TOOLS,
-            tool_choice = "auto",
+            tool_choice = "required",   # force tool call every turn — prevents text-only early exit
         )
         last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 
-        # Agent chose to reply with text only (no tool call) — done
+        # Safety fallback: if model somehow emits no tool call despite "required", stop gracefully
         if last_choice.finish_reason == "stop" or not last_choice.message.tool_calls:
             break
 
