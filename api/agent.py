@@ -265,6 +265,14 @@ TOOLBOX GUIDANCE:
 
 8. `calculate_disproportionality` — ROR + 95% CI. Call only with explicit numerical counts from a tool response. Tag source: "Literature / PubMed (PMID: X)" or "OpenFDA FAERS Database". Never estimate.
 
+⛔ HR ≠ ROR — CRITICAL DISTINCTION:
+  - ROR (Reporting Odds Ratio): a FAERS disproportionality metric. Comes ONLY from calculate_disproportionality.
+    Place in discovered_events[].ror ONLY after running fetch_fda_adverse_events → calculate_disproportionality.
+  - HR / OR / aHR / RR: effect sizes from PubMed cohort/RCT studies. Place in discovered_events[].literature_hr.
+  ⚠️ NEVER copy an HR, OR, aHR, or RR from a PubMed article into the `ror` field.
+     Doing so mislabels a literature finding as a FAERS pharmacovigilance signal — a methodological error.
+     If FAERS was not queried for an AE, leave `ror` empty (omit it).
+
 9. `generate_pharmacovigilance_report` → `submit_final_report` — Always in this order. Pass case_counts with raw a/b/c/d when disproportionality is available.
 
 LITERATURE SIGNAL CLASSIFICATION — 3-BUCKET FRAMEWORK:

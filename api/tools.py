@@ -625,16 +625,40 @@ TOOLS = [
                                 },
                                 "ror": {
                                     "type": "number",
-                                    "description": "ROR from calculate_disproportionality (Bucket 3 only). Omit if FAERS returned no data."
+                                    "description": (
+                                        "⛔ FAERS ONLY — the Reporting Odds Ratio returned by calculate_disproportionality. "
+                                        "Set this ONLY after calling fetch_fda_adverse_events → calculate_disproportionality. "
+                                        "NEVER copy HR, OR, aHR, or any other effect size from a PubMed article into this field. "
+                                        "HR ≠ ROR. They measure different things from different data sources. "
+                                        "If FAERS was not queried for this AE, omit this field entirely."
+                                    )
                                 },
                                 "ci_95": {
                                     "type": "array",
                                     "items": {"type": "number"},
-                                    "description": "95% CI [lower, upper] from calculate_disproportionality (Bucket 3 only). Omit if ROR not calculated."
+                                    "description": "95% CI [lower, upper] from calculate_disproportionality (FAERS only). Omit if ROR not calculated."
                                 },
                                 "faers_significant": {
                                     "type": "boolean",
                                     "description": "True if ROR ≥ 2.0 AND lower CI > 1.0 (from calculate_disproportionality). Omit if ROR not calculated."
+                                },
+                                "literature_hr": {
+                                    "type": "number",
+                                    "description": (
+                                        "HR, OR, aHR, or RR reported in a PubMed article for this AE. "
+                                        "Use this for effect sizes from cohort studies, case-control studies, or RCTs. "
+                                        "This is separate from `ror` — literature HR and FAERS ROR are different metrics. "
+                                        "Omit if no quantitative effect size was reported in the literature."
+                                    )
+                                },
+                                "literature_ci_95": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "95% CI [lower, upper] for the literature_hr value. Omit if not reported."
+                                },
+                                "literature_hr_label": {
+                                    "type": "string",
+                                    "description": "Label for the literature effect size, e.g. 'HR', 'aHR', 'OR', 'RR'. Omit if literature_hr not set."
                                 }
                             },
                             "required": ["event_name", "bucket"]
@@ -1947,18 +1971,30 @@ def generate_pharmacovigilance_report(
             label = _bucket_label.get(ev.get("bucket", ""), ev.get("bucket", "—"))
             n_str = str(ev["evidence_count"]) if ev.get("evidence_count") is not None else "—"
 
+            # ── FAERS ROR (from calculate_disproportionality only) ──
             ror_val = ev.get("ror")
             if ror_val is not None:
                 ci_val   = ev.get("ci_95")
                 sig_val  = ev.get("faers_significant")
-                ci_part  = f" (CI: {ci_val[0]}–{ci_val[1]})" if ci_val and len(ci_val) == 2 else ""
+                ci_part  = f" ({ci_val[0]}–{ci_val[1]})" if ci_val and len(ci_val) == 2 else ""
                 sig_icon = " 🔴" if sig_val else " 🟢"
-                ror_str  = f"{ror_val}{ci_part}{sig_icon}"
+                ror_str  = f"ROR {ror_val}{ci_part}{sig_icon}"
             else:
                 ror_str = "—"
 
+            # ── Literature effect size (HR / OR / aHR from PubMed) ──
+            lit_hr = ev.get("literature_hr")
+            if lit_hr is not None:
+                lit_ci   = ev.get("literature_ci_95")
+                lit_lbl  = ev.get("literature_hr_label") or "HR"
+                lit_ci_p = f" ({lit_ci[0]}–{lit_ci[1]})" if lit_ci and len(lit_ci) == 2 else ""
+                dir_icon = " 🟢" if lit_hr < 1 else " 🔴"
+                lit_str  = f"{lit_lbl} {lit_hr}{lit_ci_p}{dir_icon}"
+            else:
+                lit_str = "—"
+
             matrix_rows.append(
-                f"| {ev.get('event_name', '—')} | {icon} {label} | {n_str} | {ror_str} |"
+                f"| {ev.get('event_name', '—')} | {icon} {label} | {n_str} | {lit_str} | {ror_str} |"
             )
 
         if matrix_rows:
@@ -1969,12 +2005,13 @@ def generate_pharmacovigilance_report(
             )
             signals_matrix_section = (
                 "## Discovered Signals Matrix\n\n"
-                "| Adverse Event | Classification | Evidence (articles) | FAERS ROR (95% CI) |\n"
-                "|---|---|---|---|\n"
+                "| Adverse Event | Classification | Evidence (articles) | Literature HR/OR | FAERS ROR (95% CI) |\n"
+                "|---|---|---|---|---|\n"
                 + "\n".join(matrix_rows)
                 + labeled_note
                 + "> 🟡 Label Discrepancy — Elevated Severity · 🔴 Candidate Unlabeled Signal\n"
-                "> ROR significance: 🔴 ≥ 2.0 AND lower CI > 1.0 · 🟢 below threshold\n\n---\n"
+                "> Literature HR/OR: 🟢 < 1 (protective) · 🔴 > 1 (risk)\n"
+                "> FAERS ROR: 🔴 ≥ 2.0 AND lower CI > 1.0 (signal) · 🟢 below threshold\n\n---\n"
             )
         else:
             # All events confirmed labeled — no actionable signals
