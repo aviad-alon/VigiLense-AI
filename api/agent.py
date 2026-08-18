@@ -558,7 +558,11 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                 _unquantified_b3 = [
                     ev.get("event_name", "unknown")
                     for ev in (fn_args.get("discovered_events") or [])
-                    if ev.get("bucket") == "potentially_unlabeled" and ev.get("ror") is None
+                    if (
+                        ev.get("bucket") == "potentially_unlabeled"
+                        and ev.get("ror") is None
+                        and ev.get("direction") != "protective"  # protective findings don't need FAERS ROR
+                    )
                 ]
                 if _unquantified_b3:
                     _blocked_result = {

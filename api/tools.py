@@ -2075,26 +2075,19 @@ def _derive_signal_level(
     llm_signal_level: str | None,
 ) -> str:
     """
-    Compute signal_level deterministically from hard evidence — prevents LLM
-    from producing contradictions such as 🟢 header when FAERS is 🔴 significant.
+    Compute signal_level from evidence. The LLM's judgment is the primary decision.
+    Python only overrides for FAERS statistical significance — a purely mathematical check
+    that cannot be interpreted away. Bucket-based escalation is left entirely to the LLM
+    so that it can correctly handle directional evidence (e.g. protective findings → none).
 
-    Acts as a FLOOR: enforces minimum escalation from evidence, but never
-    downgrades a valid LLM escalation (e.g. Bucket 2 fatal outcome in targeted mode).
-
-    Priority (highest wins):
-      1. FAERS statistically significant (is_significant=True)          → "significant"
-      2. Any per-AE faers_significant=True in discovered_events         → "significant"
-      3. Any Bucket 3 (potentially_unlabeled) AE in discovered_events   → "potential"
-      4. Any Bucket 2 (severity_discrepancy) AE in discovered_events    → "potential"
-      5. LLM judgment (passed through as-is for targeted-mode nuances)
-
-    NOTE: Protective-direction events (direction="protective", HR < 1 / OR < 1) are excluded
-    from the floor calculation per ICH E2E / GVP Module IX — they are not safety signals.
+    Override rules (highest wins):
+      1. FAERS statistically significant (is_significant=True)          → floor "significant"
+      2. Any per-AE faers_significant=True in discovered_events         → floor "significant"
+      3. Everything else                                                 → trust LLM judgment
     """
     python_floor = "none"
 
     def _is_protective(ev: dict) -> bool:
-        """Return True if this event is a protective finding that must not drive escalation."""
         return ev.get("direction") == "protective"
 
     if is_significant:
@@ -2102,23 +2095,16 @@ def _derive_signal_level(
     elif discovered_events:
         for ev in discovered_events:
             if _is_protective(ev):
-                continue  # protective findings never drive FAERS escalation
+                continue
             if ev.get("faers_significant"):
                 python_floor = "significant"
                 break
-        if python_floor == "none":
-            for ev in discovered_events:
-                if _is_protective(ev):
-                    continue  # protective findings never drive signal floor
-                if ev.get("bucket") in ("potentially_unlabeled", "severity_discrepancy"):
-                    python_floor = "potential"
-                    break
 
     llm_level = (llm_signal_level or "none").strip().lower()
     if llm_level not in _SIGNAL_PRIORITY:
         llm_level = "none"
 
-    # Return whichever is higher — floor or LLM
+    # FAERS math can only raise, never lower the LLM's call
     return max(python_floor, llm_level, key=lambda x: _SIGNAL_PRIORITY[x])
 
 
