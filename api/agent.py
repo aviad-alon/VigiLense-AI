@@ -229,8 +229,12 @@ TOOLBOX GUIDANCE:
 
 2. `get_drug_profile` — Resolves active ingredients, drug class, and mechanism. Call once per investigation (parallel with initial KB query in Step 1).
 
-3. `fetch_pubmed_advanced` — Drug-specific AE literature from PubMed. Use strict boolean syntax: `"drug_name" AND ("ae1" OR "ae2")` — all multi-word terms double-quoted. Always pass investigation_context.
-   In Broad Surveillance Mode: pass surveillance_mode=true to enable broader article gate criteria (accepts systematic reviews that enumerate AEs with patient counts).
+3. `fetch_pubmed_advanced` — Drug-specific AE literature from PubMed. Use strict boolean syntax with MeSH terms where possible:
+   Preferred pattern: `"DrugName"[MeSH Terms] AND "AdverseEvent"[MeSH Terms]`
+   Fallback pattern:  `"drug_name" AND ("ae_term1" OR "ae_term2")` — all multi-word terms double-quoted.
+   Example: `"Methotrexate"[MeSH Terms] AND ("hepatotoxicity" OR "liver injury" OR "Drug-Induced Liver Injury"[MeSH Terms])`
+   The pipeline automatically appends clinical publication-type filters (Case Reports, Clinical Trials, Observational Studies) — no need to add them manually.
+   Always pass investigation_context. In Broad Surveillance Mode: pass surveillance_mode=true.
 
 4. `search_drug_class_effects` — Class-level AE literature. Use to contextualize whether an AE is a class effect or drug-specific signal. Call after `get_drug_profile` to use the correct class name.
 

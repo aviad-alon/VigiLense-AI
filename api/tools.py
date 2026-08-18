@@ -898,8 +898,32 @@ PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fc
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
 SCREENING_BATCH_SIZE     = 30   # articles per LLM screening call
-MAX_PUBMED_SCREEN        = 30   # targeted mode: articles fetched when screening is active
-MAX_PUBMED_SCREEN_BROAD  = 50   # broad surveillance mode: larger window, recent-date sort
+MAX_PUBMED_SCREEN        = 150  # targeted mode: PT-filtered pool; Phase 1 is cheap so fetch more
+MAX_PUBMED_SCREEN_BROAD  = 200  # broad surveillance mode: larger window, recent-date sort
+
+# ── PubMed Publication Type Filter ────────────────────────────────────────────
+# Appended to every investigation query to restrict results to clinical evidence
+# and reduce noise from editorials, letters, conference abstracts, and basic-science papers.
+_PUBMED_PT_FILTER = (
+    '("Case Reports"[pt] OR "Clinical Trial"[pt] OR "Randomized Controlled Trial"[pt] '
+    'OR "Observational Study"[pt] OR "Multicenter Study"[pt] '
+    'OR "Controlled Clinical Trial"[pt] OR "Cohort Studies"[mh])'
+)
+
+
+def _add_pt_filters(query_term: str) -> str:
+    """
+    Append clinical publication-type filters to a PubMed boolean query.
+
+    Restricts results to case reports, clinical trials, observational studies,
+    and pharmacovigilance database studies — eliminating editorials, letters, and
+    basic-science papers before the article ever reaches the LLM screener.
+
+    Skipped if the query already contains [pt] or [mh] tags (LLM included them).
+    """
+    if "[pt]" in query_term.lower() or "[mh]" in query_term.lower():
+        return query_term  # already filtered — don't double-apply
+    return f"({query_term}) AND {_PUBMED_PT_FILTER}"
 
 
 def _screen_articles_llm(
@@ -933,51 +957,48 @@ def _screen_articles_llm(
 
         articles_block = ""
         for idx, art in enumerate(batch, 1):
-            abstract_snippet = (art.get("abstract") or "")[:1000]
+            # Full abstract — not truncated. RESULTS and CONCLUSION sections
+            # (where AE counts, outcomes, and dosages live) must be visible
+            # to Phase 1 to avoid false-negative exclusions.
+            abstract_text = (art.get("abstract") or "")
             articles_block += (
                 f"\n[{idx}] PMID: {art.get('pmid', 'N/A')}\n"
                 f"Title: {art.get('title', '')}\n"
-                f"Abstract: {abstract_snippet}\n"
+                f"Abstract: {abstract_text}\n"
             )
 
-        if surveillance_mode:
-            include_block = (
-                "INCLUDE an article if it reports ANY adverse event data for this drug:\n"
-                "- Case report, case series, RCT, cohort study, or observational study\n"
-                "- Systematic review or meta-analysis that lists AE frequencies or incidence for this drug\n"
-                "- Pharmacovigilance database study (FAERS, VigiBase, WHO) with case counts\n"
-                "- Registry data or post-marketing surveillance report\n\n"
-                "EXCLUDE ONLY if:\n"
-                "- The drug is mentioned only in passing with zero drug-specific AE data\n"
-                "- Pure animal, in-vitro, or mechanistic study with no patient outcomes\n"
-                "- Completely unrelated disease area with no safety overlap\n\n"
-            )
-        else:
-            include_block = (
-                "INCLUDE an article if it contains ANY of:\n"
-                "- Direct clinical, case report, or trial data on the specific drug\n"
-                "- Adverse event or safety signal data related to the query\n"
-                "- Mechanistic or pharmacological evidence for the drug–event relationship\n"
-                "- Pharmacovigilance database data (FAERS, VigiBase, WHO) involving the drug\n\n"
-                "EXCLUDE if:\n"
-                "- The drug is only mentioned in passing with no specific data\n"
-                "- The study population is entirely unrelated to the query context\n"
-                "- It is a review with no original drug-specific data\n\n"
-            )
+        # ── Phase 1: Fail-Soft screening ──────────────────────────────────────
+        # Goal: MAXIMIZE RECALL. Exclude only articles that are DEFINITIVELY
+        # off-topic. Every uncertain or borderline article must pass through
+        # to Phase 2 for the stricter per-article gate.
+        #
+        # The question is NOT "is this relevant?" — it is
+        # "is this DEFINITELY irrelevant beyond any doubt?"
+        # surveillance_mode controls Phase 2 strictness, not Phase 1.
 
         prompt = (
-            "You are a Pharmacovigilance Literature Screener.\n\n"
+            "You are a Pharmacovigilance Literature Pre-Screener.\n\n"
             f"Investigation Context:\n{investigation_context}\n\n"
-            f"Review the following {len(batch)} candidate articles. "
-            "For each article, determine whether it contains relevant safety, "
-            "efficacy, or epidemiological data DIRECTLY related to the investigation "
-            "context — considering the specific drug, its active ingredients, "
-            "the adverse event, and the target population.\n\n"
-            + include_block
-            + f"Articles:\n{articles_block}\n\n"
-            "Respond with a JSON array for ONLY the relevant articles:\n"
-            '[{"pmid": "12345678", "reason": "One sentence explaining relevance"}, ...]\n'
-            "If none are relevant, return: []\n"
+            f"You have {len(batch)} candidate articles below. "
+            "Your ONLY task is to identify articles that are DEFINITIVELY IRRELEVANT "
+            "— articles that could not possibly contribute any safety evidence for "
+            "the drug or adverse event in the investigation context.\n\n"
+            "⚠️ DEFAULT RULE: If in ANY doubt — keep the article. "
+            "A missed signal is worse than a false positive. "
+            "Phase 2 will apply strict clinical criteria; your job is only to remove obvious trash.\n\n"
+            "EXCLUDE an article ONLY if ALL of the following are clearly true:\n"
+            "  1. Pure animal, in-vitro, cell-line, or computational study — zero human patient data\n"
+            "  2. The drug of interest is not studied at all (mentioned only in a comparison table or background sentence)\n"
+            "  3. Completely unrelated disease area with no plausible mechanism overlap\n\n"
+            "NEVER exclude based on:\n"
+            "  - Study design (reviews, meta-analyses, editorials may still contain AE frequency tables)\n"
+            "  - Seemingly low relevance — uncertainty means KEEP\n"
+            "  - The AE not being the exact focus of the paper (it may still report it)\n\n"
+            f"Articles:\n{articles_block}\n\n"
+            "Return a JSON array of the PMIDs to KEEP (articles that are NOT definitively irrelevant):\n"
+            '[{"pmid": "12345678", "reason": "brief reason"}, ...]\n'
+            "If ALL articles should be kept, return all of them.\n"
+            "If ALL are definitively irrelevant, return: []\n"
             "Return ONLY valid JSON — no explanation, no markdown."
         )
 
@@ -1306,7 +1327,12 @@ def fetch_pubmed_advanced(
             effective_min_year = min_year
             sort_order = "relevance"
 
-        articles, audit = _pubmed_fetch(query_term, fetch_limit, effective_min_year, sort_order)
+        # Enrich query with clinical PT filters when running an investigation.
+        # Reduces noise from editorials and basic-science papers before any LLM call.
+        effective_query = _add_pt_filters(query_term) if investigation_context else query_term
+
+        articles, audit = _pubmed_fetch(effective_query, fetch_limit, effective_min_year, sort_order)
+        audit["query_enriched"] = effective_query != query_term  # flag for transparency
 
         if investigation_context and articles:
             articles = _screen_articles_llm(articles, investigation_context, surveillance_mode)
@@ -1342,7 +1368,9 @@ def search_drug_class_effects(
     try:
         term = f'"{drug_class}" AND "{adverse_event}"'
         fetch_limit = MAX_PUBMED_SCREEN if investigation_context else max_results
-        articles, audit = _pubmed_fetch(term, fetch_limit, min_year)
+        effective_term = _add_pt_filters(term) if investigation_context else term
+        articles, audit = _pubmed_fetch(effective_term, fetch_limit, min_year)
+        audit["query_enriched"] = effective_term != term
 
         if investigation_context and articles:
             articles = _screen_articles_llm(articles, investigation_context)
@@ -1968,6 +1996,51 @@ def _filter(fn_args: dict, allowed: set) -> dict:
     return {k: v for k, v in fn_args.items() if k in allowed}
 
 
+_SIGNAL_PRIORITY = {"none": 0, "potential": 1, "significant": 2}
+
+
+def _derive_signal_level(
+    is_significant: bool,
+    discovered_events: list | None,
+    llm_signal_level: str | None,
+) -> str:
+    """
+    Compute signal_level deterministically from hard evidence — prevents LLM
+    from producing contradictions such as 🟢 header when FAERS is 🔴 significant.
+
+    Acts as a FLOOR: enforces minimum escalation from evidence, but never
+    downgrades a valid LLM escalation (e.g. Bucket 2 fatal outcome in targeted mode).
+
+    Priority (highest wins):
+      1. FAERS statistically significant (is_significant=True)          → "significant"
+      2. Any per-AE faers_significant=True in discovered_events         → "significant"
+      3. Any Bucket 3 (potentially_unlabeled) AE in discovered_events   → "potential"
+      4. Any Bucket 2 (severity_discrepancy) AE in discovered_events    → "potential"
+      5. LLM judgment (passed through as-is for targeted-mode nuances)
+    """
+    python_floor = "none"
+
+    if is_significant:
+        python_floor = "significant"
+    elif discovered_events:
+        for ev in discovered_events:
+            if ev.get("faers_significant"):
+                python_floor = "significant"
+                break
+        if python_floor == "none":
+            for ev in discovered_events:
+                if ev.get("bucket") in ("potentially_unlabeled", "severity_discrepancy"):
+                    python_floor = "potential"
+                    break
+
+    llm_level = (llm_signal_level or "none").strip().lower()
+    if llm_level not in _SIGNAL_PRIORITY:
+        llm_level = "none"
+
+    # Return whichever is higher — floor or LLM
+    return max(python_floor, llm_level, key=lambda x: _SIGNAL_PRIORITY[x])
+
+
 def dispatch(fn_name: str, fn_args: dict) -> dict:
     """Route a tool call from the agent to its implementation."""
     if fn_name == "get_drug_profile":
@@ -1991,12 +2064,19 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
     if fn_name == "abort_investigation":
         return abort_investigation(**_filter(fn_args, {"abort_code", "reason"}))
     if fn_name == "generate_pharmacovigilance_report":
-        return generate_pharmacovigilance_report(**_filter(fn_args, {
+        filtered = _filter(fn_args, {
             "drug_name", "adverse_event", "is_significant", "signal_level",
             "summary_findings", "recommendations", "ror", "ci_95",
             "disproportionality_source", "literature_section", "case_counts",
             "surveillance_mode", "discovered_events",
-        }))
+        })
+        # Python-enforced floor: prevents LLM contradictions like 🟢 header + 🔴 FAERS
+        filtered["signal_level"] = _derive_signal_level(
+            is_significant    = bool(filtered.get("is_significant")),
+            discovered_events = filtered.get("discovered_events"),
+            llm_signal_level  = filtered.get("signal_level"),
+        )
+        return generate_pharmacovigilance_report(**filtered)
     if fn_name == "submit_final_report":
         return submit_final_report(**_filter(fn_args, {
             "confidence_score", "evidence_chain", "signal_level",
