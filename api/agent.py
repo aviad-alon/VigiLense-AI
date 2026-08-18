@@ -8,14 +8,8 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 
 import json
 import re
-import time
-import openai
 from config import llm_client, supabase, CHAT_MODEL
 from tools import TOOLS, dispatch
-
-# Hard wall: exit the ReAct loop this many seconds before Vercel's 300s maxDuration.
-# Ensures Python can still serialise and return a valid HTTP response.
-_LOOP_TIME_BUDGET = 240  # seconds
 
 # ── Citation Integrity Helpers ─────────────────────────────────────────────────
 # These run in Python — independent of LLM behaviour — guaranteeing that
@@ -28,24 +22,46 @@ def _build_literature_section(
     articles: list,
     summaries: dict | None = None,
     audit_entries: list | None = None,
+    tiers: dict | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
-    Render a literature block from real PubMed tool results.
-    All articles have passed the Phase 2 gate — only actionable articles with direct patient evidence.
+    Render a dual-section literature block from real PubMed tool results.
     All metadata (PMID, title, authors, journal, URL) is 100% deterministic — the LLM never touches it.
+
+    Section 1 — Main view (Actionable):
+        Tier 1 articles (case reports, trials, safety alerts) in concise 2-line bullet format,
+        numbered with their UNIFIED continuous index.
+
+    Section 2 — Collapsible <details> block (All screened):
+        ALL screened articles numbered 1..N with unified continuous index.
+        - Tier 1 (1..K):   repeated with full entry (title + key finding)
+        - Tier 2 (K+1..N): 1-line summary note per article (background / no direct AE data)
 
     Returns:
         section_text    — the formatted Markdown string
-        pmid_to_number  — mapping of PMIDs → article number (1-indexed)
+        pmid_to_number  — mapping of ALL PMIDs → continuous article number (1-indexed)
     """
     summaries = summaries or {}
+    tiers     = tiers     or {}
 
-    # Articles with pre-computed summaries (passed Phase 2 gate)
-    included   = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
-    no_summary = [a for a in articles if a.get("pmid") and a["pmid"] not in summaries]
+    # Articles that have a summary (either pre-computed or LLM-provided)
+    relevant = [a for a in articles if a.get("pmid") and a["pmid"] in summaries]
 
-    all_ordered = included + no_summary
+    # Split by tier (default = "1" if not specified)
+    tier1 = [a for a in relevant if tiers.get(a["pmid"], "1") == "1"]
+    tier2 = [a for a in relevant if tiers.get(a["pmid"], "1") == "2"]
+
+    # Articles that passed screening but have no summary (Phase 2 failure edge-case)
+    summarized_pmids = {a["pmid"] for a in relevant}
+    no_summary = [a for a in articles if a.get("pmid") and a["pmid"] not in summarized_pmids]
+
+    # ── Unified continuous numbering: Tier 1 first (1..K), then Tier 2, then no-summary ──
+    all_ordered = tier1 + tier2 + no_summary
     pmid_to_number: dict[str, int] = {art["pmid"]: i + 1 for i, art in enumerate(all_ordered)}
+
+    total_unique_screened = len(articles)
+    total_included        = len(relevant)
+    total_excluded_deep   = total_unique_screened - total_included
 
     parts = []
 
@@ -64,19 +80,21 @@ def _build_literature_section(
             )
             audit_lines.append(f"- `{query}` — {dr} — {coverage}")
 
-        if all_ordered:
-            from collections import Counter
-            type_counts = Counter(a.get("pv_study_type", "") for a in included if a.get("pv_study_type"))
-            type_summary = ", ".join(f"{v}× {k}" for k, v in sorted(type_counts.items()))
+        if total_unique_screened > 0:
+            excl_note = (
+                f" (excluded during deep screening: {total_excluded_deep}"
+                " — e.g., non-clinical, no direct AE data)"
+                if total_excluded_deep > 0 else ""
+            )
             audit_lines.append(
-                f"\n**Pipeline summary:** {len(articles)} screened"
-                f" → **{len(included)} included**"
-                + (f" ({type_summary})" if type_summary else " (direct patient-level AE evidence)")
+                f"\n**Pipeline summary:** {total_unique_screened} unique articles after LLM screening"
+                f" → **{total_included} included** "
+                f"({len(tier1)} actionable / {len(tier2)} background){excl_note}"
             )
         parts.append("\n".join(audit_lines))
 
-    # ── Actionable articles ───────────────────────────────────────────────────
-    if not included:
+    # ── Section 1: Actionable literature — main view ──────────────────────────
+    if not tier1:
         parts.append(
             "*No actionable articles with direct adverse event reports were identified "
             "in the retrieved literature.*"
@@ -84,10 +102,10 @@ def _build_literature_section(
     else:
         parts.append(
             f"**Actionable Literature — Direct AE Evidence "
-            f"({len(included)} article{'s' if len(included) != 1 else ''})**"
+            f"({len(tier1)} article{'s' if len(tier1) != 1 else ''})**"
         )
         items = []
-        for art in included:
+        for art in tier1:
             pmid       = art.get("pmid", "")
             n          = pmid_to_number[pmid]
             title      = (art.get("title") or "Unknown title").strip()
@@ -100,12 +118,58 @@ def _build_literature_section(
             )
             link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
 
-            study_tag = f" · `{art.get('pv_study_type')}`" if art.get("pv_study_type") else ""
-            line  = f"**{n}.** {title} — {author_str} · *{journal}* · {pubdate}{study_tag} · {link}"
+            line  = f"**{n}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
             line += f"\n   **Key Finding:** {summaries[pmid]}"
             items.append(line)
 
         parts.append("\n\n".join(items))
+
+    # ── Section 2: Collapsible — all screened articles ────────────────────────
+    n_all = len(all_ordered)
+    if n_all > 0:
+        def _art_header(art: dict) -> str:
+            pmid       = art.get("pmid", "")
+            n          = pmid_to_number.get(pmid, "?")
+            title      = (art.get("title") or "Unknown title").strip()
+            authors    = art.get("authors") or []
+            pubdate    = (art.get("pubdate") or "").strip()
+            journal    = (art.get("source") or "").strip()
+            author_str = (
+                f"{authors[0]} et al." if len(authors) > 1
+                else (authors[0] if authors else "Unknown")
+            )
+            link = f"[PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" if pmid else ""
+            return f"**{n}.** {title} — {author_str} · *{journal}* · {pubdate} · {link}"
+
+        collapsible_items: list[str] = []
+
+        # Tier 1 in collapsible — full entry (mirrors main view)
+        for art in tier1:
+            pmid = art.get("pmid", "")
+            collapsible_items.append(
+                _art_header(art) + f"\n   **Key Finding:** {summaries[pmid]}"
+            )
+
+        # Tier 2 in collapsible — 1-line summary note
+        for art in tier2:
+            pmid         = art.get("pmid", "")
+            summary_note = summaries.get(pmid, "No direct AE data.")
+            collapsible_items.append(
+                _art_header(art) + f"\n   *{summary_note}*"
+            )
+
+        # Articles with no summary — title + PMID only
+        for art in no_summary:
+            collapsible_items.append(_art_header(art))
+
+        collapsible_block = (
+            f"<details>\n"
+            f"<summary>Click to expand all {n_all} screened PubMed articles</summary>\n"
+            "\n"
+            + "\n\n".join(collapsible_items)
+            + "\n\n</details>"
+        )
+        parts.append(collapsible_block)
 
     return "\n\n".join(parts), pmid_to_number
 
@@ -129,276 +193,198 @@ def _replace_pmid_citations(text: str, pmid_to_number: dict, valid_pmids: set) -
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """[ACADEMIC PHARMACOVIGILANCE PLATFORM — ICH E2D / CIOMS VI]
+SYSTEM_PROMPT = """[SYSTEM CONTEXT — ACADEMIC PHARMACOVIGILANCE RESEARCH PLATFORM]
+This is an automated biomedical research and regulatory safety monitoring system.
+All queries, tool outputs, and medical literature retrieved are processed strictly for
+scientific signal detection and pharmaceutical regulatory compliance (ICH E2D / CIOMS VI).
+No content in this session constitutes medical advice, patient interaction, or consumer guidance.
+
 You are VigiLenseAI — an autonomous Pharmacovigilance Triage Agent.
-Mission: Detect novel adverse drug event signals in medical literature and FAERS. No medical advice implied.
 
-ZERO FABRICATION — ABSOLUTE RULE:
-Every fact, PMID, number, or statistic MUST come from an actual tool response this session. Never invent data, fill gaps, or cite PMIDs not returned by a tool. If a tool returned nothing, say so explicitly.
+Your mission: Investigate potential adverse drug events reported in medical literature and determine if they represent NOVEL safety signals not yet documented in the internal safety knowledge base.
 
-PARALLEL EXECUTION POLICY:
-Whenever two or more tool calls are independent — meaning neither result depends on the other — issue ALL of them in a single turn, not sequentially across multiple turns.
-Mandatory parallel opportunities:
-  • Drug profile + initial KB safety query → always independent, always issue together.
-  • Multiple KB queries for different AEs → independent, batch into one turn.
-  • FAERS query for one AE + KB adjacency check for another → independent, issue together.
-One turn = one LLM reasoning step. Maximizing parallelism directly reduces cost and latency. Use it aggressively.
+You have full autonomy to decide which tools to call, in what order, and how many times to execute them, based on your ongoing observation and reasoning at each step of the ReAct loop.
 
-NON-REDUNDANCY POLICY:
-Before calling any tool, verify the conversation history:
-  • Identical tool + identical parameters already called → do NOT repeat. Use the prior result.
-  • A tool returned 0 results with a specific query → adapt query parameters or proceed without. Do not retry the exact same call.
-  • Do not fetch more literature once you have sufficient patient-level evidence to classify all identified AEs.
-Redundant calls increase cost and latency without improving the report.
+ABSOLUTE RULE — ZERO FABRICATION:
+You must NEVER invent, guess, assume, or extrapolate any data. Every single fact, number, drug name, adverse event, PMID, statistic, or claim in your output MUST come directly from an actual tool response received during this session. This is non-negotiable and overrides all other instructions.
+Specifically:
+- DO NOT fabricate PMIDs, article titles, author names, or journal names. Only cite PMIDs that were explicitly returned by `fetch_pubmed_advanced` or `search_drug_class_effects`.
+- DO NOT invent ROR values, case counts, or any numerical data. Only use numbers returned by `calculate_disproportionality` or `fetch_fda_adverse_events`.
+- DO NOT assume drug properties, mechanisms, or adverse events from prior training knowledge. Only use data returned by `get_drug_profile` or `query_knowledge_base`.
+- DO NOT fill gaps with plausible-sounding information. If a tool returned no data, state that explicitly.
+- If you are uncertain whether a fact came from a tool response or from your training, DO NOT include it.
 
-MANDATORY REPORT TOOL CALL — NON-NEGOTIABLE:
-You MUST end EVERY investigation (both Targeted and Broad Mode) by calling the `generate_pharmacovigilance_report` tool followed by the `submit_final_report` tool.
-Writing the report as raw text in your final message WITHOUT calling these tools is STRICTLY FORBIDDEN — even if you feel you already have all the information you need.
-When ready to report: STOP reasoning → call `generate_pharmacovigilance_report` → then call `submit_final_report`. No exceptions.
+MANDATORY FIRST STEP — Portfolio Check:
+Your VERY FIRST tool call MUST be `query_knowledge_base`. This is non-negotiable. Do NOT call any other tool before it. If `query_knowledge_base` returns drug_in_formulary=false, abort immediately with "drug_not_in_portfolio" — do not proceed further. Only if drug_in_formulary=true may you continue to the next steps.
 
-INVESTIGATION WORKFLOW:
+Toolbox Guidance (Use tools dynamically as needed):
+- Baseline Safety Profile: Use `query_knowledge_base` to check if an adverse event is already documented for a drug in the FDA label/internal KB. Call this multiple times — once per specific finding discovered in literature.
+  SCOPE RULE — when reviewing KB results: only incorporate text chunks that explicitly discuss the INVESTIGATED AE or a clinically adjacent finding in the same organ system or mechanism (e.g., for bruxism → movement disorders, EPS, jaw tension; for NAION → retinal vascular events, optic neuropathy). Discard chunks whose primary topic is a different, unrelated AE category (e.g., suicidality, hepatotoxicity, QTc) even if they co-appear in the same label section. A chunk is relevant only if the AE it describes shares the same organ system, pharmacological pathway, or symptom cluster as the investigated AE.
+- Chemical/Class Context: Use `get_drug_profile` to retrieve active ingredients and pharmacological class.
+- Literature Evidence: Use `fetch_pubmed_advanced` to gather case reports and recent studies — ALWAYS include the drug name or an active ingredient name in the query_term (e.g. "sertraline cardiac arrhythmia", not just "cardiac arrhythmia"). If the user's query specifies a target population (e.g. adolescents, pediatric, elderly), add the relevant demographic term to the query. ALWAYS pass `investigation_context` — a concise summary of the investigation including: drug name, active ingredients, adverse event being investigated, and any demographic context from the user query. Example: "Sertraline (active ingredient: sertraline hydrochloride, class: SSRI) — investigating bruxism signal in adolescents". This triggers full-coverage LLM screening of ALL retrieved articles (up to 200) before returning results. Apply the same to `search_drug_class_effects`.
+  **CRITICAL — PubMed Boolean Syntax**: ALWAYS use strict grouped boolean syntax in `query_term`. Format: `"drug_name" AND ("ae1" OR "ae2" OR "ae3")`. Multi-word terms must be double-quoted. Examples:
+  - CORRECT: `"sildenafil" AND ("myocardial infarction" OR "arrhythmia" OR "sudden cardiac death")`
+  - CORRECT: `"sertraline" AND ("QTc prolongation" OR "cardiac arrhythmia" OR "torsades de pointes")`
+  - WRONG: `sildenafil cardiovascular effects OR myocardial infarction OR stroke` — without parentheses, PubMed applies OR globally and returns 400,000+ unrelated results, defeating the investigation.
+- System Memory: Use `check_past_signals` to review past internal investigations and avoid re-escalating discarded signals.
+- Statistical Analysis — Two-Stage Fallback Protocol:
+  STAGE 1 (Literature): If a retrieved PubMed article contains EXPLICIT numerical 2×2 counts (a, b, c, d), pass them directly to `calculate_disproportionality`. Tag the source as "Literature / PubMed (PMID: X)" when calling `generate_pharmacovigilance_report`.
+  STAGE 2 (FAERS Fallback): If literature was retrieved but contains NO explicit numerical counts, do NOT skip statistical analysis. Instead, invoke `fetch_fda_adverse_events(drug_name, adverse_event)` to retrieve real-world case counts from OpenFDA FAERS. If the tool returns valid a/b/c/d values (all non-null), pass them to `calculate_disproportionality`. Tag the source as "OpenFDA FAERS Database" when calling `generate_pharmacovigilance_report`.
+  NO DATA: If both stages yield no usable counts (FAERS returned an error or null values), do NOT fabricate any numbers. Proceed to `generate_pharmacovigilance_report` without ROR (leave ror=null) and note the absence of quantitative data in `summary_findings`.
+- Deliverables: Use `generate_pharmacovigilance_report` to format the Markdown report, and invoke `submit_final_report` when you are ready to conclude the investigation.
+  When calling `generate_pharmacovigilance_report` and you have FAERS disproportionality data, ALWAYS pass `case_counts` with the raw a/b/c/d values from `fetch_fda_adverse_events` so the 2×2 matrix appears in the statistics table.
+  When `fetch_fda_adverse_events` returns demographic data (gender, age groups, top concomitant drugs), include a concise demographics summary in the Signal Assessment section of `summary_findings`.
 
-── STEP 0 — Portfolio Check (always first, always alone):
-Call `query_knowledge_base` as your very first action. If drug_in_formulary=false → call `abort_investigation` with "drug_not_in_portfolio" immediately. No other tool may precede this.
+COMPOSITE SIGNAL CLASSIFICATION — `signal_level` in `generate_pharmacovigilance_report`:
+This field drives the master report header and Subject table. It MUST reflect BOTH evidence sources:
 
-── STEP 1 — Parallel Initialization (single turn):
-Once portfolio membership is confirmed, determine the investigation mode and issue the following in ONE parallel turn:
-  • `get_drug_profile` — resolve active ingredients, pharmacological class, and mechanism.
-  • `query_knowledge_base` — initial safety baseline query:
-      Targeted Mode: use the specific AE focus term (e.g., "bleeding risk", "hepatotoxicity").
-      Broad Mode: use broad safety terms (e.g., "adverse events", "drug interactions", "safety").
-  Mode detection from the query:
-    TARGETED MODE            — query contains "focus on [event]" → adverse_event = the event, surveillance_mode = false.
-    BROAD SURVEILLANCE MODE  — no specific event named → adverse_event = "General Safety Surveillance — Broad Scan", surveillance_mode = true.
+  "significant" → FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0. Statistical threshold confirmed.
 
-── STEP 2 — Evidence-Driven Investigation:
+  "potential"   → FAERS is negative OR not calculable, BUT at least one Tier 1 article was found
+                  with a novel adverse event NOT already fully documented in the FDA label /
+                  internal KB for this specific AE. This includes: unlabeled case reports,
+                  case series, or clinical trial findings for the investigated event.
+                  Use this whenever your Regulatory Recommendation is to escalate or review.
+                  A safety officer reading 🟢 while you recommend escalation is a compliance risk.
 
-  TARGETED MODE:
-  a. Expand label baseline if needed: issue 1–2 additional parallel `query_knowledge_base` calls for adjacent organ-system terms or the drug_interactions section — only if the initial query left coverage gaps.
-  b. PubMed search: `fetch_pubmed_advanced` with the EXACT focus term in strict boolean syntax. If count=0, try active ingredient or class-level variant once.
-  c. Evidence-triggered KB checks: as literature results arrive, for each AE that is NOT obviously the focus event or a clear class effect, verify label coverage with `query_knowledge_base`. Batch multiple AE checks into one parallel turn.
-  d. FAERS fallback: only if literature has no 2×2 counts AND the AE is a Candidate Unlabeled Signal worth quantifying.
+  "none"        → Use ONLY when BOTH: (a) FAERS shows no disproportionality or is uncalculable,
+                  AND (b) literature contains NO novel Tier 1 findings beyond what the label
+                  already documents. If any unlabeled risk exists in literature → use "potential".
 
-  BROAD SURVEILLANCE MODE — run steps (a) and (b) IN THE SAME PARALLEL TURN:
-  a. PubMed broad search: `fetch_pubmed_advanced` with:
-       query_term = '"[drug_name]" AND ("adverse drug reaction" OR "adverse effect" OR "toxicity" OR "case report" OR "pharmacovigilance")'
-       investigation_context = "[drug] — broad safety surveillance (any adverse event)"
-       surveillance_mode = true   ← REQUIRED — enables broader gate, date sort, and 2021-present window
-       (min_year is automatically enforced to 2021 by the pipeline when surveillance_mode=true)
-  b. FAERS AE discovery: `fetch_top_faers_events` with drug_name — call IN PARALLEL with (a).
-       Returns top 15 most-reported AEs from spontaneous reports, independent of literature.
+RULE: `is_significant` is STATISTICAL ONLY (ROR threshold). `signal_level` is your expert
+composite judgment. When in doubt between "potential" and "none", always choose "potential".
 
-  c. AE Consolidation: merge the AE list from PubMed summaries + FAERS top list → deduplicate → build a master AE list.
-       If PubMed returned 0 included articles, rely on the FAERS list as the PRIMARY AE source.
-       Note for each AE: appeared in PubMed only / FAERS only / both.
+FDA LABEL CROSS-MAPPING — NEAREST TERM MATCHING:
+When checking the Internal KB / FDA Label Baseline for an adverse event:
+1. First call `query_knowledge_base` with the EXACT reported adverse event term (e.g., "spinal cord infarction").
+2. If no exact match is documented, MANDATORY secondary check: call `query_knowledge_base` again with overlapping or anatomically adjacent terms from the same organ system or mechanism. Examples:
+   - For spinal cord events: also query "transverse myelitis", "spinal ischemia", "ischemic stroke", "NAION"
+   - For cardiac events: also query "arrhythmia", "QTc prolongation", "sudden cardiac death"
+   - For hepatic events: also query "hepatotoxicity", "liver injury", "elevated transaminases"
+3. Report BOTH levels of matching in the Internal KB / FDA Label Baseline section — exact matches and adjacent-term matches separately.
 
-  d. KB Classification: for each AE in the master list that is NOT obviously a labeled class effect,
-       issue parallel `query_knowledge_base` calls (batch up to 4 per turn). Skip for AEs unambiguously labeled.
+DEDUPLICATION RULE:
+Do NOT label any article as a duplicate unless it shares an IDENTICAL PMID or IDENTICAL TITLE with another already-processed article. Different papers on the same topic, same drug, or same adverse event are NOT duplicates. Never write "(Duplicate...)" or "(Same as...)" in any `relevance_summary`. Every distinct PMID is a distinct article.
 
-  ── ARTICLE-FINDING CROSS-CHECK (mandatory before proceeding to step e) ──
-  After KB queries complete, examine every included PubMed article. For each distinct AE
-  described in an included article:
-    1. State the exact AE term as used in the article (e.g., "sensorineural hearing loss", "acute pancreatitis").
-    2. Ask: does that EXACT term (or a direct MedDRA PT synonym) appear in the KB chunks?
-       YES → Bucket 1. NO (only broader/adjacent terms found) → Bucket 3.
-    3. You CANNOT classify an article-reported AE as Bucket 1 unless you can cite the specific
-       term from the KB response. "The label covers myopathy" does NOT cover "hearing loss."
-  This cross-check is the PRIMARY driver of your AE classification. KB queries are
-  verification tools — the article findings determine what must be verified.
+TWO-TIER ARTICLE CLASSIFICATION in `article_summaries`:
+Every article MUST include a `tier` field. Classify BEFORE writing the summary:
 
-  e. FAERS Disproportionality — MANDATORY for every Candidate Unlabeled Signal (Bucket 3):
-       For EACH AE classified as Bucket 3 after step (d), run this sequence:
-         1. Call `fetch_fda_adverse_events(drug_name, ae_term)` to retrieve 2×2 counts.
-         2. If a/b/c/d counts are returned (not None): immediately call `calculate_disproportionality` with those values.
-         3. Record {ror, ci_95, faers_significant} from the result — include in the discovered_events entry for that AE.
-       Batch up to 3 Bucket 3 AEs per parallel turn when multiple signals exist.
-       ONLY skip if FAERS returns all-None counts (drug-AE pair genuinely absent from FAERS).
-       ⚠️ DO NOT proceed to step (f) while any Bucket 3 AE is still awaiting FAERS quantification.
+TIER "1" — ACTIONABLE (renders full entry in the report). Use when the article meets ANY of:
+  - Direct case report or case series documenting actual patient occurrences of the target AE.
+  - Clinical trial or cohort study reporting statistically significant incidence, risk ratio, or HR for the target AE.
+  - Novel safety alert or pharmacovigilance database study (FAERS, VigiBase, WHO) with direct case counts.
+  Default to "1" if uncertain.
 
-  ── PRE-REPORT MANDATORY CHECK ──
-  Before calling generate_pharmacovigilance_report, verify your work:
-       • Every AE in the master list has a bucket classification. ✓/✗
-       • Every Bucket 3 AE has had fetch_fda_adverse_events → calculate_disproportionality run. ✓/✗
-       If ANY Bucket 3 AE is unquantified → go back to step (e) NOW. Do not skip.
+TIER "2" — BACKGROUND (omitted from individual entries; counted in grouped note only). Use when:
+  - General safety narrative review with no original case data.
+  - Mechanistic, animal, or in-vitro study with no patient AE reports.
+  - PK/PD study not reporting the target AE.
+  - Study explicitly concluding no occurrences of the target AE.
 
-  f. Report: generate_pharmacovigilance_report with surveillance_mode=true,
-       adverse_event = "General Safety Surveillance — Broad Scan",
-       discovered_events = fully populated array of all classified AEs with ror/ci_95/faers_significant for Bucket 3.
+`relevance_summary` format by tier:
+  Tier 1 → 1-2 tight sentences: state case count or risk metric, dose/timing if known, clinical outcome. No titles or author names.
+    Example: "Case series (n=3, males 45–62 yrs): sildenafil 50–100 mg associated with acute NAION onset within 24h of ingestion; visual recovery partial in 2/3 cases."
+  Tier 2 → Single line only: "No [target AE] reported; [one-sentence mechanistic or contextual note]."
+    Example: "No NAION reported; supports systemic hypotension as a plausible mechanism via PDE5-mediated vasodilation."
 
-  g. signal_level: "significant" if any AE has ROR ≥ 2.0 (lower CI > 1.0) OR any Bucket 2 finding with fatal/life-threatening outcome ·
-       "potential" if any Candidate Unlabeled Signal OR any Bucket 2 trigger present (high incidence, vulnerable subpopulation, serious outcome) ·
-       "none" ONLY if all AEs are Bucket 1 with no severity triggers present.
+Autonomous Operating Rules:
+1. Before every tool call, explain your reasoning (Thought) for why this specific tool/query is needed next.
+2. Adapt your strategy based on observations: if initial queries yield vague results, refine your search (e.g. search by active ingredient or drug class).
+3. Conclude the investigation via `generate_pharmacovigilance_report` then `submit_final_report` as soon as you have sufficient evidence. Do NOT keep calling PubMed or query_knowledge_base indefinitely — after 3–5 knowledge base queries and 2–3 PubMed searches, you have enough to conclude.
+4. Only flag a signal as NOVEL if the evidence is not already documented in the baseline knowledge base.
+5. IMPORTANT: You MUST call `generate_pharmacovigilance_report` followed immediately by `submit_final_report` to properly end the investigation. Do not stop mid-investigation.
 
-── STEP 3 — Stop When Evidence Is Complete:
-Stop investigating when ALL of the following are true:
-  (a) Every identified AE has a classification (Established Labeled Event, Label Discrepancy, or Candidate Unlabeled Signal).
-  (b) Every Candidate Unlabeled Signal (Bucket 3) has had fetch_fda_adverse_events called AND calculate_disproportionality run — or FAERS returned all-None counts for that drug-AE pair.
-  (c) No new distinct AE emerged from the most recent PubMed call.
-Do NOT continue querying once these criteria are met. Call `generate_pharmacovigilance_report` immediately.
-If results are insufficient: adapt query parameters once (different term, active ingredient, or class) — then proceed with available evidence. Never retry identical parameters.
+IMPORTANT — `summary_findings` IN `generate_pharmacovigilance_report`:
+The system automatically injects a verified, numbered literature list into the report.
+Structure your `summary_findings` using these exact markdown subheadings, and use bullet points (`-`) whenever you list multiple items within a section:
 
-TOOLBOX GUIDANCE:
+INVESTIGATION SCOPE CONSTRAINT — mandatory for every bullet in every section below:
+Every finding you list MUST directly concern the specific adverse event under investigation (or a clinically adjacent finding in the same organ system / pharmacological mechanism).
+DO NOT include safety findings from unrelated AE categories — even if they appear in the FDA label, a boxed warning, or a KB chunk for the same drug. Unrelated warnings introduce thematic noise and reduce report precision.
+Concretely: if investigating bruxism → exclude suicidality, QTc, hepatotoxicity.
+           if investigating NAION → exclude psychiatric warnings, weight changes.
+           if investigating cardiac arrhythmia → exclude CNS or GI warnings.
+Clinically adjacent findings ARE allowed: for bruxism → movement disorders, EPS, tardive dyskinesia (same motor/dopaminergic system); for NAION → retinal vein occlusion, optic neuropathy (same ocular vascular system).
 
-1. `query_knowledge_base` — FDA label / internal KB. Use to: (a) confirm portfolio membership, (b) build label baseline, (c) verify label coverage for a specific AE.
-   If no exact match on primary query → issue one secondary query with adjacent terms (same organ system / mechanism). Do not issue more than two KB queries per AE.
-   Multiple KB calls in one turn are encouraged when checking different AEs simultaneously — batch them.
+### Internal KB / FDA Label Baseline
+What the internal KB / FDA label already documents specifically about the INVESTIGATED AE or closely adjacent findings in the same organ system or pharmacological mechanism (reference specific label sections). Do NOT list unrelated safety categories. Use bullet points:
+- Finding directly about investigated AE (Section X)
+- Adjacent finding in same organ system / mechanism (Section Y)
 
-2. `get_drug_profile` — Resolves active ingredients, drug class, and mechanism. Call once per investigation (parallel with initial KB query in Step 1).
+### Novel Findings
+Adverse events from retrieved literature NOT already in the FDA label. Use one bullet per distinct finding. Cite specific articles using [PMID: XXXXXXXX] — the system auto-converts these to numbered citations [N] that match the literature list above. Only use PMIDs actually returned by the PubMed tools:
+- Finding description [PMID: XXXXXXXX]
+- Another finding [PMID: XXXXXXXX]
 
-3. `fetch_pubmed_advanced` — Drug-specific AE literature from PubMed. Use strict boolean syntax with MeSH terms where possible:
-   Preferred pattern: `"DrugName"[MeSH Terms] AND "AdverseEvent"[MeSH Terms]`
-   Fallback pattern:  `"drug_name" AND ("ae_term1" OR "ae_term2")` — all multi-word terms double-quoted.
-   Example: `"Methotrexate"[MeSH Terms] AND ("hepatotoxicity" OR "liver injury" OR "Drug-Induced Liver Injury"[MeSH Terms])`
-   The pipeline automatically appends clinical publication-type filters (Case Reports, Clinical Trials, Observational Studies) — no need to add them manually.
-   Always pass investigation_context. In Broad Surveillance Mode: pass surveillance_mode=true.
+### Known / Expected Findings
+Label-consistent findings related to the INVESTIGATED AE (or its adjacent organ system) that should be discarded as non-novel. ONLY include findings whose AE category matches the investigation scope — do NOT list unrelated boxed warnings, contraindications, or safety concerns from different organ systems even if they appear in the same label. Use bullet points:
+- Finding related to investigated AE (already documented in label, Section X)
 
-4. `search_drug_class_effects` — Class-level AE literature. Use to contextualize whether an AE is a class effect or drug-specific signal. Call after `get_drug_profile` to use the correct class name.
+### Signal Assessment
+Overall evidence quality, signal strength, and confidence — scoped EXCLUSIVELY to the investigated AE. Base every bullet on evidence directly relating to the investigation target; do not reference unrelated drug risks. Use bullet points:
+- Evidence quality: ...
+- Signal strength: ...
+- Confidence: ...
 
-5. `check_past_signals` — Historical investigation logs. Prevents re-escalating already-reviewed signals.
+Do NOT include article titles or author names — cite only with [PMID: XXXXXXXX].
 
-6. `fetch_top_faers_events` — BROAD SURVEILLANCE MODE only. Call in Step 2 PARALLEL with `fetch_pubmed_advanced` to enumerate top N spontaneously reported AEs for the drug.
-   Use the returned AE list as discovery seeds. High report count ≠ causality — classify every AE via `query_knowledge_base` before drawing conclusions.
-   Do NOT call in Targeted Mode (use `fetch_fda_adverse_events` for quantification after AE is confirmed Bucket 3).
+ARTICLE SUMMARIES — `article_summaries` IN `generate_pharmacovigilance_report`:
+INCLUDE ALL articles returned by fetch_pubmed_advanced or search_drug_class_effects — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools.
 
-7. `fetch_fda_adverse_events` — FAERS real-world case counts for a specific drug-AE pair. Call ONLY when: (a) literature has no explicit 2×2 counts, AND (b) the AE is a Candidate Unlabeled Signal worth quantifying. Do NOT call for Established Labeled Events.
-   When FAERS returns demographics (gender, age, concomitant drugs) → include a brief summary in Signal Assessment.
+For each article provide: `pmid` (exact, do not fabricate), `tier` ("1" or "2" per TWO-TIER ARTICLE CLASSIFICATION above), and `relevance_summary` (format per tier above).
 
-8. `calculate_disproportionality` — ROR + 95% CI. Call only with explicit numerical counts from a tool response. Tag source: "Literature / PubMed (PMID: X)" or "OpenFDA FAERS Database". Never estimate.
+Do NOT copy-paste abstract text verbatim — write analytical extractions. Do NOT include article titles or author names in `relevance_summary`.
 
-⛔ HR ≠ ROR — CRITICAL DISTINCTION:
-  - ROR (Reporting Odds Ratio): a FAERS disproportionality metric. Comes ONLY from calculate_disproportionality.
-    Place in discovered_events[].ror ONLY after running fetch_fda_adverse_events → calculate_disproportionality.
-  - HR / OR / aHR / RR: effect sizes from PubMed cohort/RCT studies. Place in discovered_events[].literature_hr.
-  ⚠️ NEVER copy an HR, OR, aHR, or RR from a PubMed article into the `ror` field.
-     Doing so mislabels a literature finding as a FAERS pharmacovigilance signal — a methodological error.
-     If FAERS was not queried for an AE, leave `ror` empty (omit it).
+STRICT ISOLATED EXTRACTION — MANDATORY for every `relevance_summary`:
+Each `relevance_summary` must be derived SOLELY from the abstract of that specific PMID.
+NEVER borrow, carry over, or infer ANY clinical detail (case count, patient age/sex, dose, outcome) from another article's abstract.
 
-9. `generate_pharmacovigilance_report` → `submit_final_report` — Always in this order. Pass case_counts with raw a/b/c/d when disproportionality is available.
+TITLE-TO-FINDING VALIDATION — run this check before writing each summary:
+  - If the title describes an animal, in-vitro, or mechanistic study → assign Tier "2" and do NOT include any patient case details in the summary.
+  - If the title says "case report" or "case series" → assign Tier "1" and include ONLY the case details explicitly stated in THAT SPECIFIC abstract.
 
-LITERATURE SIGNAL CLASSIFICATION — 3-BUCKET FRAMEWORK:
-Apply to EVERY literature finding during your reasoning. Classify as you observe each tool result — do not defer to the report step.
+MANDATORY SELF-CHECK — before submitting `article_summaries`:
+For each entry, ask: "Does this PMID's relevance_summary contain ANY fact that came from a DIFFERENT PMID's abstract?" If yes — delete that fact immediately. Every entry must be 100% self-contained.
 
-⚠️ INTERNAL CLASSIFICATION ONLY — bucket names and code labels are for your reasoning only.
-They MUST NEVER appear in summary_findings, recommendations, or any user-facing text.
-Use these professional terms when writing for the user:
-  Bucket 1 (confirmed_labeled)     → write: "Established Labeled Event"
-  Bucket 2 (severity_discrepancy)  → write: "Label Discrepancy — Elevated Severity"
-  Bucket 3 (potentially_unlabeled) → write: "Candidate Unlabeled Signal"
+Note: the system performs its own pre-computed isolated extraction during the screening phase and will use those values with priority. Your `article_summaries` serve as a fallback — apply the same isolation rules regardless.
 
-DEFAULT ASSUMPTION: Every finding starts as confirmed_labeled. Novelty must be proven, not assumed.
+SOURCE ATTRIBUTION:
+- If statistical disproportionality (ROR) is calculated using `fetch_fda_adverse_events`, set `disproportionality_source` to "OpenFDA FAERS Database".
+- If counts came from a literature article, set `disproportionality_source` to "Literature / PubMed (PMID: X)".
 
-⚠️ STRICT LABELING CHECK — Bucket 1 requires that the returned KB chunks contain the EXACT AE term
-(or a recognized MedDRA PT-level synonym). Semantic proximity is NOT sufficient:
-  ✗ "Hearing Loss" is NOT covered by "Myopathy", "Sensory Disturbances", or "neurotoxicity"
-  ✗ "Acute Pancreatitis" is NOT covered by "GI adverse effects" or "abdominal pain"
-  ✗ "QTc Prolongation" is NOT covered by "cardiac monitoring" or "cardiovascular effects"
-If the KB chunks describe a nearby organ system or mechanism but do NOT name the AE explicitly
-→ the AE is NOT confirmed labeled → classify as Bucket 3.
-"Mechanism-based" coverage applies ONLY when the KB chunk explicitly states this mechanism causes
-this specific type of adverse event — NEVER infer coverage from general drug class action.
+Guardrail Rules — call `abort_investigation` immediately in each of the following cases.
+For every abort: write the `reason` in the same language the user wrote their query. Be concise, professional, and helpful — tell the user exactly what went wrong and what they can do instead.
 
-Bucket 1 — confirmed_labeled:
-  The FDA label / KB covers the AE by name, by drug CLASS, or by mechanism.
-  CLASS COVERAGE RULE: If the label mentions a pharmacological class or a mechanism statement,
-  then drugs in that class are confirmed_labeled for AEs explicitly named under that class.
-  → Report as "Established Labeled Event". Do NOT escalate.
+─── CASE 1: query_too_vague ───
+TRIGGER: You cannot identify a specific drug name in the user's prompt (e.g. "check side effects", "analyze this drug", "investigate something").
+ACTION: abort_code = "query_too_vague"
+REASON template: "The query does not specify a drug name. Please re-submit with the name of the specific drug you want to investigate (e.g. 'Analyze adverse events for Warfarin')."
 
-Bucket 2 — severity_discrepancy:
-  The AE is labeled BUT literature shows clearly higher frequency, severity, or broader patient population than described.
-  Bucket 2 TRIGGERS — assign Bucket 2 (do NOT remain Bucket 1) if ANY of the following are explicitly reported:
-    • Fatal or life-threatening outcome from the AE (patient death, ICU admission, organ failure requiring intervention).
-    • Reported incidence ≥ 20% in any specific population (e.g., "53% of DILI cases in patients >65").
-    • A high-risk subpopulation (elderly, renally/hepatically impaired, pediatric, specific comedication) not adequately warned in the current label.
-    • Severity or dose gradient substantially beyond what the current label describes.
-  → Report as "Label Discrepancy — Elevated Severity". Recommend "Monitor / Consider Label Update" — NEVER "Discard".
+─── CASE 2: multiple_drugs_detected ───
+TRIGGER: The prompt clearly names two or more distinct drugs (e.g. "compare Warfarin and Aspirin", "Metformin and Sertraline interaction").
+ACTION: abort_code = "multiple_drugs_detected"
+REASON template: "This system investigates one drug per query. Your prompt mentions multiple drugs ('[drug A]' and '[drug B]'). Please submit a separate query for each drug."
 
-Bucket 3 — potentially_unlabeled:
-  Assign ONLY if ALL are true:
-  (a) The specific AE is NOT in the label by name.
-  (b) The AE is NOT covered by any class-level or mechanism-level statement.
-  (c) Absence confirmed via KB primary query AND a secondary query with adjacent terms.
-  (d) Evidence comes from direct patient-level data (case report, trial, pharmacovigilance DB).
-  → Report as "Candidate Unlabeled Signal". Set signal_level = "potential" or "significant".
-  When uncertain between Bucket 2 and Bucket 3: default to Bucket 1. Never escalate class interactions.
+─── CASE 3: non_medical_query ───
+TRIGGER: The prompt has no connection to drug safety, pharmacovigilance, adverse events, or medical literature (e.g. "write me a poem", "what is the weather", "explain quantum physics").
+ACTION: abort_code = "non_medical_query"
+REASON template: "This system is designed exclusively for pharmacovigilance signal detection. The submitted query does not relate to drug safety or medical literature. Please submit a drug safety investigation request."
 
-COMPOSITE SIGNAL LEVEL (signal_level):
-"significant" → FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0, OR any Bucket 2 finding with a fatal or life-threatening outcome explicitly reported in the evidence.
-"potential"   → At least one confirmed Bucket 3 finding, OR at least one Bucket 2 trigger present (high incidence ≥ 20%, vulnerable subpopulation not in label, serious non-fatal outcome beyond label description).
-"none"        → ALL findings are Bucket 1 AND no Bucket 2 triggers are present. Expected for well-characterized drugs with no severity/frequency discrepancy — not a failure.
-is_significant = statistical only (ROR). signal_level = composite expert judgment.
-⚠️ A "Label Discrepancy — Elevated Severity" (Bucket 2) finding NEVER produces signal_level = "none". Always "potential" or "significant".
+─── CASE 4: drug_not_recognized ───
+TRIGGER: `get_drug_profile` returns source="fallback" AND the name is clearly not a real pharmaceutical — e.g. it is gibberish ("xkqzp"), a common food ("banana", "coffee"), a chemical formula ("H2O"), or a non-drug substance.
+DO NOT TRIGGER if: the name is a real drug that simply failed API lookup (e.g. "Sildenafil", "Aspirin", "Ibuprofen"). In that case, proceed using the name for PubMed and FAERS searches.
+ACTION: abort_code = "drug_not_recognized"
+REASON template: "The name '[input]' was not recognized as a pharmaceutical compound in our drug database. Please verify the drug name and re-submit. If this is a brand name, try using the generic (active ingredient) name instead."
 
-DIRECTIONAL SIGNAL RULE (ICH E2E / GVP Module IX — mandatory):
-A Safety Signal is STRICTLY defined as evidence of increased risk, adverse drug reaction, or unexpected harm.
-Protective effects (HR < 1, OR < 1, reduced incidence vs. comparator) are NEVER Safety Signals.
+─── CASE 5: no_literature_found ───
+TRIGGER: Both `fetch_pubmed_advanced` AND `search_drug_class_effects` returned count=0 — meaning zero articles were found for this drug and adverse event combination.
+ACTION: abort_code = "no_literature_found"
+REASON template: "No relevant medical literature was found on PubMed for '[drug name]' in relation to the investigated adverse events (search period: 2020–present). This may indicate that the signal has not been reported in recent peer-reviewed literature. Consider broadening the adverse event scope or searching manually."
 
-Decision tree — apply before setting signal_level:
-
-  Case A — ALL evidence shows protective or neutral effect (HR < 1, OR < 1, reduced risk):
-    → signal_level = "none"
-    → recommendations = "No safety escalation required — findings show protective association only."
-    → In summary_findings: include a "### Efficacy / Protective Observations" subsection summarizing
-      the protective findings (HR values, populations studied, effect size). Do NOT write these
-      under Novel Signal Assessment. Do NOT escalate.
-
-  Case B — MIXED evidence (protective in overall cohort, elevated risk in a specific subgroup):
-    → Isolate the risk subgroup ONLY for signal classification.
-    → signal_level and recommendations reflect ONLY the risk element of the subgroup.
-    → Protective component goes under "### Efficacy / Protective Observations" — clearly separated.
-    → Do NOT average protective and risk effects to conclude "no signal" if a real risk subgroup exists.
-
-  Case C — FAERS ROR > 1 AND literature shows only protective effect:
-    → Report both independently. FAERS signal stands on its own (pharmacovigilance data ≠ RCT).
-    → Do NOT cancel the FAERS signal because literature is protective (different populations/methods).
-    → signal_level is driven by the FAERS ROR (significant or potential as usual).
-    → In summary_findings: document the discordance explicitly. Note literature direction vs. FAERS direction.
-
-⚠️ NEVER classify a protective finding (HR < 1, OR < 1) as signal_level = "potential" or "significant".
-   Doing so violates GVP Module IX and is a CLASSIFICATION ERROR.
-
-ARTICLE SUMMARIES (article_summaries):
-All articles have passed a strict Phase 2 gate — only direct patient-level AE evidence is included.
-Provide pmid + relevance_summary per article. 1–3 sentences: case count, dose/timing, clinical outcome. No titles or author names.
-STRICT ISOLATED EXTRACTION: Every relevance_summary derives SOLELY from that article's abstract. Never borrow from another.
-SELF-CHECK: Confirm no summary contains facts from a different PMID before submitting.
-DEDUPLICATION: Duplicate = identical PMID or identical title only. Different papers on the same topic are NOT duplicates. Never write "(Duplicate...)" in any relevance_summary.
-
-`summary_findings` — DETAILED RESEARCH ANALYSIS:
-
-⚠️ ARTICLE-ONLY RULE: Every claim must be grounded in a specific retrieved article. Cite using [N] inline. Do NOT add information from outside the articles.
-⛔ DRUG ISOLATION RULE: Every sentence refers only to the drug in `drug_name`. Never mention another drug.
-⚠️ COVERAGE RULE: Every included article must be cited at least once by [N]. A summary that skips articles is incomplete.
-⚠️ LENGTH RULE: This is the core output of the investigation. Generic sentences without [N] citations and specific effect sizes are not acceptable.
-
-### Evidence Overview
-2–3 sentences: how many articles were included, what outcomes they examined, and the dominant direction of evidence. Be specific (e.g., "14 of 16 articles reported protective associations across cancer, cardiovascular, and metabolic outcomes").
-
-### Detailed Findings
-Group articles by outcome category. For each category, use a bold header (e.g., **Cancer — Hepatocellular Carcinoma**) and then discuss every article in that group:
-- Cite [N], state study design, population size, key effect size with CI, and the clinical conclusion in 1–2 sentences.
-- Every [N] from the Literature section must appear here at least once.
-- If two articles cover the same outcome, compare their findings directly.
-
-### Conflicting or Risk Findings
-Only if any articles showed increased risk or harm: discuss here with [N] citations and effect sizes. Omit entirely if none — do NOT write "none found."
-
-### Bottom Line
-2–3 sentences. Based on the weighted evidence:
-- State the dominant finding clearly.
-- If there is a net safety concern → say what and why.
-- If the dominant finding is protective with no overall risk → state that no safety escalation is warranted.
-Write as if explaining to a senior clinician. No jargon.
-
-SOURCE ATTRIBUTION: disproportionality_source = "OpenFDA FAERS Database" or "Literature / PubMed (PMID: X)".
-
-GUARDRAILS — call `abort_investigation` immediately. Write reason in the user's language, concise and actionable:
-1. query_too_vague: No specific drug name identified.
-2. multiple_drugs_detected: Two or more distinct drugs named.
-3. non_medical_query: No connection to drug safety or pharmacovigilance.
-4. drug_not_recognized: `get_drug_profile` returns source="fallback" AND name is clearly not a real pharmaceutical (gibberish, food, non-drug). Do NOT trigger for real drugs that failed API lookup.
-5. no_literature_found: Both `fetch_pubmed_advanced` AND `search_drug_class_effects` returned audit.total_found=0 — meaning PubMed itself found zero matching articles.
-   ⚠️ DO NOT trigger if count=0 but audit.total_found > 0: articles were fetched but excluded by LLM screening — adapt the query or widen investigation_context and retry once before aborting.
-6. drug_not_in_portfolio: `query_knowledge_base` returns drug_in_formulary=false (always first call)."""
+─── CASE 6: drug_not_in_portfolio ───
+TRIGGER: `query_knowledge_base` returns drug_in_formulary=false. This is always your FIRST tool call — fire this abort immediately without calling any other tool.
+ACTION: abort_code = "drug_not_in_portfolio"
+REASON template (SHORT — 1-2 sentences only): '[drug_name]' is not in the organization's pharmacovigilance portfolio according to the internal knowledge base. This system only performs signal detection for drugs held in the company's portfolio."""
 
 
 # ── ReAct Loop ────────────────────────────────────────────────────────────────
@@ -431,86 +417,29 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     collected_articles: list[dict] = []    # real PubMed articles from tool results
     valid_pmids: set[str] = set()          # whitelist for PMID scrubber
     pubmed_audit_entries: list[dict] = []  # audit metadata from each PubMed tool call
-    # Pre-computed summaries from Phase 2 gate extraction in tools.py.
-    # Each was extracted in an isolated single-article LLM call — zero cross-contamination.
-    # Used with PRIORITY over LLM-batch-generated article_summaries.
+    # Pre-computed tier + summary from Phase 2 isolated extraction in tools.py.
+    # These are used with PRIORITY over LLM-batch-generated article_summaries to
+    # eliminate cross-contamination: each was extracted from a single article's
+    # abstract in an isolated LLM call with no other articles in context.
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
+    precomputed_tiers: dict[str, str] = {}       # pmid → pv_tier
     last_choice = None
-    correction_injected = False  # guard: enforce report tools exactly once if agent stops early
     MAX_ITERATIONS = 20         # allows full investigation + report + submit
-    # ── FAERS ROR tracking (Fix: bind calculate_disproportionality → discovered_events) ──
-    # faers_pending: maps (a, b, c, d) tuple → ae_name for each fetch_fda_adverse_events result.
-    # The LLM copies those same counts verbatim into calculate_disproportionality args,
-    # so the tuple is a reliable fingerprint linking the two calls.
-    faers_pending:  dict[tuple, str]  = {}   # (a,b,c,d) → ae_name
-    faers_ror_cache: dict[str, dict]  = {}   # ae_name.lower() → {ror, ci_95, faers_significant}
-
-    _loop_start = time.time()   # wall-clock guard — break before Vercel's 300s maxDuration
 
     for _ in range(MAX_ITERATIONS):
 
-        # ── Time-budget guard: exit cleanly before Vercel kills the connection ──
-        if time.time() - _loop_start > _LOOP_TIME_BUDGET:
-            print(f"[ReAct loop] Time budget ({_LOOP_TIME_BUDGET}s) reached at iteration {_}. Breaking.")
-            break
-
         # ── Reason: ask the LLM what to do next ──────────────────────────────
-        # After a correction injection, force the LLM to call a tool (cannot write text again)
-        _tool_choice = (
-            "required"
-            if correction_injected and report_markdown is None
-            else "auto"
+        response = llm_client.chat.completions.create(
+            model       = CHAT_MODEL,
+            messages    = messages,
+            tools       = TOOLS,
+            tool_choice = "auto",
         )
-        try:
-            response = llm_client.chat.completions.create(
-                model       = CHAT_MODEL,
-                messages    = messages,
-                tools       = TOOLS,
-                tool_choice = _tool_choice,
-            )
-        except openai.RateLimitError as exc:
-            print(f"[ReAct loop] OpenAI rate limit — breaking: {exc}")
-            break
-        except openai.BadRequestError as exc:
-            # 400 — most likely context_length_exceeded; re-raise other 400s
-            if "context" in str(exc).lower() or "length" in str(exc).lower():
-                print(f"[ReAct loop] Context length exceeded — breaking: {exc}")
-                break
-            raise
-        except (openai.APIConnectionError, openai.APITimeoutError) as exc:
-            print(f"[ReAct loop] Network error reaching OpenAI — breaking: {exc}")
-            break
-        except openai.APIStatusError as exc:
-            print(f"[ReAct loop] OpenAI API error {exc.status_code} — breaking: {exc}")
-            break
         last_choice = response.choices[0]
         messages.append(last_choice.message)   # add assistant turn to history
 
-        # Agent chose to reply with text only (no tool call)
+        # Agent chose to reply with text only (no tool call) — done
         if last_choice.finish_reason == "stop" or not last_choice.message.tool_calls:
-            # If the investigation is underway but report wasn't generated yet,
-            # inject ONE correction and force a tool call on the next iteration.
-            _has_investigated = any(
-                s["module"] not in ("query_knowledge_base", "check_past_signals", "abort_investigation")
-                for s in steps
-            )
-            if (
-                not correction_injected
-                and report_markdown is None
-                and _has_investigated
-                and _ < MAX_ITERATIONS - 2
-            ):
-                correction_injected = True
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "[SYSTEM ENFORCEMENT] You wrote a text response without calling tools. "
-                        "This violates the MANDATORY REPORT TOOL CALL rule. "
-                        "You MUST now call `generate_pharmacovigilance_report` immediately, "
-                        "then call `submit_final_report`. Do NOT write any text — call the tools."
-                    )
-                })
-                continue  # resume the loop with tool_choice="required"
             break
 
         # ── Act: execute every tool the LLM requested ────────────────────────
@@ -527,12 +456,18 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     for s in raw_summaries
                     if isinstance(s, dict) and s.get("pmid") in valid_pmids and s.get("relevance_summary")
                 }
+                llm_tiers_dict = {
+                    s["pmid"]: s.get("tier", "1")
+                    for s in raw_summaries
+                    if isinstance(s, dict) and s.get("pmid") in valid_pmids
+                }
                 # Pre-computed summaries override LLM-batch values.
                 # Each was extracted in an isolated single-article LLM call during
-                # Phase 2 gate → structurally immune to cross-contamination.
+                # Phase 2 screening → structurally immune to cross-contamination.
                 summaries_dict = {**llm_summaries_dict, **precomputed_summaries}
+                tiers_dict     = {**llm_tiers_dict,     **precomputed_tiers}
                 lit_section, pmid_to_number = _build_literature_section(
-                    collected_articles, summaries_dict, pubmed_audit_entries
+                    collected_articles, summaries_dict, pubmed_audit_entries, tiers_dict
                 )
                 fn_args["literature_section"] = lit_section
                 if "summary_findings" in fn_args:
@@ -540,134 +475,10 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                         fn_args["summary_findings"], pmid_to_number, valid_pmids
                     )
 
-                # ── Inject tracked FAERS RORs into discovered_events ─────────────
-                # The LLM often forgets to carry ror/ci_95/faers_significant from
-                # calculate_disproportionality back into the discovered_events entries.
-                # Python tracked every (fetch_fda_adverse_events → calculate_disproportionality)
-                # chain, so we can fill the gaps deterministically here.
-                if faers_ror_cache:
-                    for ev in (fn_args.get("discovered_events") or []):
-                        ae_key = ev.get("event_name", "").lower().strip()
-                        if not ae_key or ev.get("ror") is not None:
-                            continue  # already populated — skip
-                        match = faers_ror_cache.get(ae_key)
-                        if not match:
-                            # Fuzzy fallback: substring match handles minor term differences
-                            for k, v in faers_ror_cache.items():
-                                if k in ae_key or ae_key in k:
-                                    match = v
-                                    break
-                        if match:
-                            ev["ror"]               = match["ror"]
-                            ev["ci_95"]             = match["ci_95"]
-                            ev["faers_significant"] = match["faers_significant"]
-
-                # ── RC-1: Bucket 3 pre-report gate ────────────────────────────────
-                # Block the report if any Candidate Unlabeled Signal still has no ROR
-                # after the cache injection above. Enforces the mandatory FAERS step
-                # without relying on the LLM to self-enforce it.
-                _unquantified_b3 = [
-                    ev.get("event_name", "unknown")
-                    for ev in (fn_args.get("discovered_events") or [])
-                    if (
-                        ev.get("bucket") == "potentially_unlabeled"
-                        and ev.get("ror") is None
-                        and ev.get("direction") != "protective"  # protective findings don't need FAERS ROR
-                    )
-                ]
-                if _unquantified_b3:
-                    _blocked_result = {
-                        "blocked": True,
-                        "reason": (
-                            "Report blocked — Candidate Unlabeled Signals without FAERS ROR: "
-                            + ", ".join(_unquantified_b3)
-                            + ". Run fetch_fda_adverse_events → calculate_disproportionality for each first."
-                        ),
-                    }
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(_blocked_result),
-                    })
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "[SYSTEM ENFORCEMENT — PRE-REPORT GATE] "
-                            "generate_pharmacovigilance_report was BLOCKED. "
-                            "These Candidate Unlabeled Signals have no FAERS disproportionality data yet: "
-                            + ", ".join(_unquantified_b3)
-                            + ". You MUST call fetch_fda_adverse_events → calculate_disproportionality "
-                            "for EACH of them before retrying the report. "
-                            "⚠️ DO NOT reclassify these AEs to confirmed_labeled to bypass this gate — "
-                            "that would be a classification error. Their Bucket 3 status was determined "
-                            "from article evidence; you must quantify them with FAERS data. Do this NOW."
-                        ),
-                    })
-                    steps.append({
-                        "module":   "generate_pharmacovigilance_report [BLOCKED — Bucket 3 FAERS missing]",
-                        "prompt":   fn_args,
-                        "response": _blocked_result,
-                    })
-                    continue  # skip dispatch; outer loop re-prompts the LLM
-
-                # ── RC-3: Recommendation scrubber ─────────────────────────────────
-                # Catch signal_level / recommendations contradiction before it is
-                # rendered into the markdown. Overrides any "dismiss" language when
-                # the composite signal is potential or significant.
-                _sig_lvl = (fn_args.get("signal_level") or "none").lower()
-                _reco    = (fn_args.get("recommendations") or "").lower()
-                _dismiss_phrases = (
-                    "no further action", "no action required", "no action needed",
-                    "no action", "discard", "no novel signal",
-                )
-                if _sig_lvl in ("potential", "significant") and any(p in _reco for p in _dismiss_phrases):
-                    _prefix = (
-                        "Escalate to Safety Team — A statistically significant FAERS "
-                        "disproportionality signal (ROR ≥ 2.0, lower CI > 1.0)"
-                        if _sig_lvl == "significant"
-                        else "Escalate to Safety Team — A Candidate Unlabeled Signal"
-                    )
-                    fn_args["recommendations"] = (
-                        _prefix
-                        + " was identified in this investigation. Per ICH E2D / CIOMS VI, "
-                        "this finding cannot be dismissed without further regulatory review. "
-                        "Recommended actions: (1) initiate targeted literature surveillance "
-                        "for the identified adverse event; (2) evaluate adequacy of current "
-                        "label coverage; (3) consider signal validation study or "
-                        "pharmacoepidemiological analysis."
-                    )
-
             try:
                 result = dispatch(fn_name, fn_args)
             except Exception as exc:
                 result = {"error": f"Tool execution failed: {exc}"}
-
-            # ── Post-dispatch FAERS ROR tracking ─────────────────────────────────
-            # Record fetch_fda_adverse_events result: map (a,b,c,d) → ae_name so
-            # we can link it to the subsequent calculate_disproportionality call.
-            if fn_name == "fetch_fda_adverse_events" and not result.get("error"):
-                a = result.get("a")
-                b = result.get("b")
-                c = result.get("c")
-                d = result.get("d")
-                ae = fn_args.get("adverse_event", "").lower().strip()
-                if all(v is not None for v in (a, b, c, d)) and ae:
-                    faers_pending[(a, b, c, d)] = ae
-
-            # Resolve calculate_disproportionality back to ae_name via the fingerprint.
-            if fn_name == "calculate_disproportionality" and not result.get("error"):
-                a = fn_args.get("cases_drug_event")
-                b = fn_args.get("cases_drug_other")
-                c = fn_args.get("cases_other_event")
-                d = fn_args.get("cases_other_other")
-                ae_name = faers_pending.pop((a, b, c, d), None)
-                ror_val = result.get("ror")
-                if ae_name and ror_val is not None:
-                    faers_ror_cache[ae_name] = {
-                        "ror":               ror_val,
-                        "ci_95":             result.get("ci_95"),
-                        "faers_significant": bool(result.get("statistically_significant")),
-                    }
 
             # ── Collect real articles + audit from PubMed tool results ──────────
             if fn_name in ("fetch_pubmed_advanced", "search_drug_class_effects"):
@@ -685,10 +496,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
                     if pmid and pmid not in valid_pmids:
                         collected_articles.append(art)
                         valid_pmids.add(pmid)
-                        # Capture pre-computed summary from Phase 2 gate extraction.
-                        # Generated one-article-at-a-time — zero cross-contamination.
+                        # Capture pre-computed tier + summary from Phase 2 isolated extraction.
+                        # These were generated one-article-at-a-time — zero cross-contamination.
                         if art.get("pv_summary"):
                             precomputed_summaries[pmid] = art["pv_summary"]
+                        if art.get("pv_tier"):
+                            precomputed_tiers[pmid] = art["pv_tier"]
 
             # Capture the markdown report when generated
             if fn_name == "generate_pharmacovigilance_report":
@@ -727,20 +540,12 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             break
 
     # Fallback if agent never called submit_final_report or abort_investigation
-    # (includes graceful exit from time-budget guard)
     if not final_report:
-        elapsed = time.time() - _loop_start
-        if elapsed > _LOOP_TIME_BUDGET:
-            last_text = (
-                f"Investigation did not complete within the {_LOOP_TIME_BUDGET}s time budget "
-                f"(elapsed: {elapsed:.0f}s). Try adding a specific focus area to narrow the query."
-            )
-        else:
-            last_text = (
-                last_choice.message.content
-                if last_choice and last_choice.message.content
-                else "Agent completed without a final report."
-            )
+        last_text = (
+            last_choice.message.content
+            if last_choice and last_choice.message.content
+            else "Agent completed without a final report."
+        )
         final_report = {
             "confidence_score":      0,
             "evidence_chain":        [s["module"] for s in steps],
