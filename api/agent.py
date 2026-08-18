@@ -298,6 +298,25 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 **PRE-SYNTHESIS ENUMERATION (mandatory — do this before writing a single word):**
 Go through every PMID in the literature section. For each one write a mental note:
 `PMID XXXXXXXX → [Novel / Known / Not applicable] — [one-line reason]`
+
+**CLASSIFICATION RULES — apply during enumeration:**
+
+**(A) CATEGORY-KNOWN vs CONTEXT-NOVEL distinction:**
+A finding is NOT "Known" just because its broad AE category appears in the FDA label.
+Classify as **Novel** if the article adds ANY of: a new specific presentation, a new high-risk population or context, a new mechanism, or unexpected severity — even when the AE category is known.
+- WRONG: Article describes iliacus hematoma during enoxaparin bridging in cancer patients → "Known — bleeding is in label"
+- CORRECT: → "Novel — specific presentation (muscle hematoma during bridging in malignancy) not in label"
+- WRONG: Article identifies intracranial hemorrhage leading to LAA occlusion implant → "Known — ICH is in label"
+- CORRECT: → "Novel — clinical context (ICH severity requiring device intervention) extends label data"
+
+**(B) DDI DIRECTIONALITY — mandatory for any drug interaction finding:**
+For every drug-drug interaction article, explicitly determine the DIRECTION of effect before classifying:
+- Does the interacting drug INCREASE the investigated drug's effect? → may cause the investigated AE (bleeding, toxicity, etc.)
+- Does the interacting drug DECREASE the investigated drug's effect? → causes the OPPOSITE outcome (reduced efficacy, thrombosis for anticoagulants)
+NEVER classify a DDI that reduces drug efficacy as a signal for the drug's primary AE. Classify it as its actual clinical consequence.
+- WRONG: Dicloxacillin ↑ Warfarin clearance → "Novel bleeding risk signal"
+- CORRECT: → "Novel reduced-efficacy signal: Dicloxacillin ↑ Warfarin clearance by 53% → ↓ INR → thromboembolism risk"
+
 You MUST do this for ALL PMIDs. Only after completing this list may you write the sections below.
 
 ```markdown
@@ -307,16 +326,22 @@ You MUST do this for ALL PMIDs. Only after completing this list may you write th
 ### Novel Findings
 Every PMID you classified as "Novel" above MUST appear here as its own bullet — no exceptions, no omissions.
 ALWAYS classify as Novel (regardless of article type) if:
-- The finding describes an adverse event or syndrome NOT documented in the FDA label for this drug
+- The finding describes an AE or syndrome NOT in the FDA label, OR adds new context/population/mechanism to a known AE category
 - The article identifies this drug as the ONLY member of its class associated with a specific AE (class differentiator)
-- The finding extends label data with a new severity, population, or mechanism (e.g., pediatric data where label only covers adults)
-You MAY cross-reference PMIDs that converge on the same signal (e.g., "Two independent case reports [PMID: X] [PMID: Y] both document...").
+- A DDI changes the drug's clinical effect in a clinically meaningful way (in either direction)
+
+**SPECIFICITY PRESERVATION — mandatory for every bullet:**
+If the Key Finding contains specific drug names, numeric values (ROR, HR, CI, dose), or named populations — these MUST appear verbatim in the bullet. Never collapse to vague phrases like "notable interactions were identified" when the source names specific drugs or effect sizes.
+- WRONG: "A study found notable drug interactions with warfarin [6]."
+- CORRECT: "Concomitant use of warfarin with cephalexin, sulfamethoxazole-trimethoprim, and furosemide was associated with significantly increased major bleeding risk in nursing home residents [PMID: XXXXXXXX]."
+
+You MAY cross-reference PMIDs that converge on the same signal.
 Prioritise by clinical severity (life-threatening first, then serious, then mild).
 If a Key Finding contains "NOTE: Confounding by indication likely" — include the finding but label it explicitly: "(Confounding by indication possible — interpret with caution)".
 Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 
 ### Known / Expected Findings
-- [Label-consistent findings only. Keep brief — one bullet per AE category.]
+- [Label-consistent findings only — same AE category AND same clinical context as label. Keep brief, one bullet per AE category.]
 
 ### Signal Assessment
 Write 4-6 sentences of expert synthesis: how many distinct novel signals were found, their clinical severity, whether multiple independent sources converge on the same signal, disproportionality data if available, and your overall confidence level. This is your professional judgment — not a bullet list.
