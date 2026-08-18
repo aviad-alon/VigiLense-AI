@@ -181,7 +181,7 @@ Once portfolio membership is confirmed, determine the investigation mode and iss
   c. KB Classification: for each AE that is NOT unambiguously an established class effect, issue parallel `query_knowledge_base` calls (batch up to 4 per turn) to verify label coverage. Skip KB for AEs obviously labeled (e.g., bleeding for anticoagulants — no KB call needed).
   d. FAERS: call `fetch_fda_adverse_events` ONLY for confirmed Candidate Unlabeled Signals — not for every AE.
   e. Report: generate_pharmacovigilance_report with surveillance_mode=true, adverse_event="General Safety Surveillance — Broad Scan", and a fully populated discovered_events array.
-  f. signal_level: "significant" if any AE has ROR ≥ 2.0 (lower CI > 1.0) · "potential" if any Candidate Unlabeled Signal found · "none" if all AEs are Established Labeled Events or Label Discrepancies.
+  f. signal_level: "significant" if any AE has ROR ≥ 2.0 (lower CI > 1.0) OR any Bucket 2 finding with fatal/life-threatening outcome · "potential" if any Candidate Unlabeled Signal OR any Bucket 2 trigger present (high incidence, vulnerable subpopulation, serious outcome) · "none" ONLY if all AEs are Bucket 1 with no severity triggers present.
 
 ── STEP 3 — Stop When Evidence Is Complete:
 Stop investigating when ALL of the following are true:
@@ -231,7 +231,12 @@ Bucket 1 — confirmed_labeled:
 
 Bucket 2 — severity_discrepancy:
   The AE is labeled BUT literature shows clearly higher frequency, severity, or broader patient population than described.
-  → Report as "Label Discrepancy — Elevated Severity". Escalation at reviewer discretion.
+  Bucket 2 TRIGGERS — assign Bucket 2 (do NOT remain Bucket 1) if ANY of the following are explicitly reported:
+    • Fatal or life-threatening outcome from the AE (patient death, ICU admission, organ failure requiring intervention).
+    • Reported incidence ≥ 20% in any specific population (e.g., "53% of DILI cases in patients >65").
+    • A high-risk subpopulation (elderly, renally/hepatically impaired, pediatric, specific comedication) not adequately warned in the current label.
+    • Severity or dose gradient substantially beyond what the current label describes.
+  → Report as "Label Discrepancy — Elevated Severity". Recommend "Monitor / Consider Label Update" — NEVER "Discard".
 
 Bucket 3 — potentially_unlabeled:
   Assign ONLY if ALL are true:
@@ -243,10 +248,11 @@ Bucket 3 — potentially_unlabeled:
   When uncertain between Bucket 2 and Bucket 3: default to Bucket 1. Never escalate class interactions.
 
 COMPOSITE SIGNAL LEVEL (signal_level):
-"significant" → FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0.
-"potential"   → FAERS negative/uncalculable BUT at least one confirmed Bucket 3 finding.
-"none"        → All findings are Bucket 1 or Bucket 2. Expected for well-characterized drugs — not a failure.
+"significant" → FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0, OR any Bucket 2 finding with a fatal or life-threatening outcome explicitly reported in the evidence.
+"potential"   → At least one confirmed Bucket 3 finding, OR at least one Bucket 2 trigger present (high incidence ≥ 20%, vulnerable subpopulation not in label, serious non-fatal outcome beyond label description).
+"none"        → ALL findings are Bucket 1 AND no Bucket 2 triggers are present. Expected for well-characterized drugs with no severity/frequency discrepancy — not a failure.
 is_significant = statistical only (ROR). signal_level = composite expert judgment.
+⚠️ A "Label Discrepancy — Elevated Severity" (Bucket 2) finding NEVER produces signal_level = "none". Always "potential" or "significant".
 
 ARTICLE SUMMARIES (article_summaries):
 All articles have passed a strict Phase 2 gate — only direct patient-level AE evidence is included.
