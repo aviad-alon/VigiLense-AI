@@ -556,9 +556,10 @@ TOOLS = [
                     "discovered_events": {
                         "type": "array",
                         "description": (
-                            "Broad Surveillance Mode only. List ALL adverse events discovered across the "
-                            "retrieved literature, each with its 3-bucket classification. "
-                            "One entry per unique AE. Include ROR only for Bucket 3 events where FAERS was queried."
+                            "Broad Surveillance Mode only. List ALL adverse events discovered across "
+                            "retrieved literature and FAERS. One entry per unique AE. "
+                            "For Bucket 3 AEs: MUST include ror, ci_95, and faers_significant "
+                            "from the calculate_disproportionality result after fetch_fda_adverse_events."
                         ),
                         "items": {
                             "type": "object",
@@ -578,11 +579,20 @@ TOOLS = [
                                 },
                                 "evidence_count": {
                                     "type": "integer",
-                                    "description": "Number of included articles reporting this AE."
+                                    "description": "Number of included articles or FAERS reports for this AE."
                                 },
                                 "ror": {
                                     "type": "number",
-                                    "description": "ROR from FAERS if queried for this event (Bucket 3 only). Omit if not queried."
+                                    "description": "ROR from calculate_disproportionality (Bucket 3 only). Omit if FAERS returned no data."
+                                },
+                                "ci_95": {
+                                    "type": "array",
+                                    "items": {"type": "number"},
+                                    "description": "95% CI [lower, upper] from calculate_disproportionality (Bucket 3 only). Omit if ROR not calculated."
+                                },
+                                "faers_significant": {
+                                    "type": "boolean",
+                                    "description": "True if ROR ≥ 2.0 AND lower CI > 1.0 (from calculate_disproportionality). Omit if ROR not calculated."
                                 }
                             },
                             "required": ["event_name", "bucket"]
@@ -1715,6 +1725,8 @@ def generate_pharmacovigilance_report(
         faers_row_badge = "🔴 Significant — ROR ≥ 2.0 and lower CI > 1.0"
     elif ror is not None:
         faers_row_badge = "🟢 Not Significant"
+    elif surveillance_mode:
+        faers_row_badge = "📊 Top AE Distribution Retrieved — see Discovered Signals Matrix for per-signal ROR"
     else:
         faers_row_badge = "⬜ Not Calculable — No usable frequency data available"
 
@@ -1765,11 +1777,20 @@ def generate_pharmacovigilance_report(
             "\n> Significance criterion: ROR ≥ 2.0 AND lower 95% CI > 1.0\n"
             f"{faers_note}"
         )
+    elif surveillance_mode:
+        stats_section = (
+            "## Statistical Disproportionality Analysis\n\n"
+            "| Metric / Parameter | Value / Data |\n"
+            "| :--- | :--- |\n"
+            f"| **Statistical Signal (FAERS)** | {faers_row_badge} |\n"
+            "\n> In Broad Surveillance Mode, disproportionality (ROR) is calculated individually "
+            "for each Candidate Unlabeled Signal — see the Discovered Signals Matrix above for per-AE results.\n"
+        )
     else:
         stats_section = (
             "## Statistical Disproportionality Analysis\n\n"
-            f"| Metric / Parameter | Value / Data |\n"
-            f"| :--- | :--- |\n"
+            "| Metric / Parameter | Value / Data |\n"
+            "| :--- | :--- |\n"
             f"| **Statistical Signal (FAERS)** | {faers_row_badge} |\n"
             "\n> ROR not calculated — no explicit 2×2 frequency counts were found in the retrieved "
             "literature, and no usable data was available from OpenFDA FAERS for this drug-event pair.\n"
@@ -1791,17 +1812,28 @@ def generate_pharmacovigilance_report(
                 "potentially_unlabeled": "Candidate Unlabeled Signal",
             }
             label   = _bucket_label.get(ev.get("bucket", ""), ev.get("bucket", "—"))
-            ror_str = str(ev["ror"]) if ev.get("ror") is not None else "—"
             n_str   = str(ev["evidence_count"]) if ev.get("evidence_count") is not None else "—"
+
+            ror_val = ev.get("ror")
+            if ror_val is not None:
+                ci_val  = ev.get("ci_95")
+                sig_val = ev.get("faers_significant")
+                ci_part = f" (CI: {ci_val[0]}–{ci_val[1]})" if ci_val and len(ci_val) == 2 else ""
+                sig_icon = " 🔴" if sig_val else " 🟢"
+                ror_str = f"{ror_val}{ci_part}{sig_icon}"
+            else:
+                ror_str = "—"
+
             matrix_rows.append(
                 f"| {ev.get('event_name', '—')} | {icon} {label} | {n_str} | {ror_str} |"
             )
         signals_matrix_section = (
             "## Discovered Signals Matrix\n\n"
-            "| Adverse Event | Classification | Evidence (articles) | FAERS ROR |\n"
+            "| Adverse Event | Classification | Evidence (articles) | FAERS ROR (95% CI) |\n"
             "|---|---|---|---|\n"
             + "\n".join(matrix_rows)
-            + "\n\n> 🟢 Established Labeled Event · 🟡 Label Discrepancy — Elevated Severity · 🔴 Candidate Unlabeled Signal\n\n---\n"
+            + "\n\n> 🟢 Established Labeled Event · 🟡 Label Discrepancy — Elevated Severity · 🔴 Candidate Unlabeled Signal\n"
+            "> ROR significance: 🔴 ≥ 2.0 AND lower CI > 1.0 · 🟢 below threshold\n\n---\n"
         )
     else:
         signals_matrix_section = ""

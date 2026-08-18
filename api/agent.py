@@ -189,12 +189,24 @@ Once portfolio membership is confirmed, determine the investigation mode and iss
   d. KB Classification: for each AE in the master list that is NOT obviously a labeled class effect,
        issue parallel `query_knowledge_base` calls (batch up to 4 per turn). Skip for AEs unambiguously labeled.
 
-  e. FAERS quantification: call `fetch_fda_adverse_events` ONLY for confirmed Candidate Unlabeled Signals (Bucket 3)
-       that are worth quantifying — not for every AE in the list.
+  e. FAERS Disproportionality — MANDATORY for every Candidate Unlabeled Signal (Bucket 3):
+       For EACH AE classified as Bucket 3 after step (d), run this sequence:
+         1. Call `fetch_fda_adverse_events(drug_name, ae_term)` to retrieve 2×2 counts.
+         2. If a/b/c/d counts are returned (not None): immediately call `calculate_disproportionality` with those values.
+         3. Record {ror, ci_95, faers_significant} from the result — include in the discovered_events entry for that AE.
+       Batch up to 3 Bucket 3 AEs per parallel turn when multiple signals exist.
+       ONLY skip if FAERS returns all-None counts (drug-AE pair genuinely absent from FAERS).
+       ⚠️ DO NOT proceed to step (f) while any Bucket 3 AE is still awaiting FAERS quantification.
+
+  ── PRE-REPORT MANDATORY CHECK ──
+  Before calling generate_pharmacovigilance_report, verify your work:
+       • Every AE in the master list has a bucket classification. ✓/✗
+       • Every Bucket 3 AE has had fetch_fda_adverse_events → calculate_disproportionality run. ✓/✗
+       If ANY Bucket 3 AE is unquantified → go back to step (e) NOW. Do not skip.
 
   f. Report: generate_pharmacovigilance_report with surveillance_mode=true,
        adverse_event = "General Safety Surveillance — Broad Scan",
-       discovered_events = fully populated array of all classified AEs.
+       discovered_events = fully populated array of all classified AEs with ror/ci_95/faers_significant for Bucket 3.
 
   g. signal_level: "significant" if any AE has ROR ≥ 2.0 (lower CI > 1.0) OR any Bucket 2 finding with fatal/life-threatening outcome ·
        "potential" if any Candidate Unlabeled Signal OR any Bucket 2 trigger present (high incidence, vulnerable subpopulation, serious outcome) ·
@@ -203,7 +215,7 @@ Once portfolio membership is confirmed, determine the investigation mode and iss
 ── STEP 3 — Stop When Evidence Is Complete:
 Stop investigating when ALL of the following are true:
   (a) Every identified AE has a classification (Established Labeled Event, Label Discrepancy, or Candidate Unlabeled Signal).
-  (b) Candidate Unlabeled Signals have been queried in FAERS (or no usable data is available).
+  (b) Every Candidate Unlabeled Signal (Bucket 3) has had fetch_fda_adverse_events called AND calculate_disproportionality run — or FAERS returned all-None counts for that drug-AE pair.
   (c) No new distinct AE emerged from the most recent PubMed call.
 Do NOT continue querying once these criteria are met. Call `generate_pharmacovigilance_report` immediately.
 If results are insufficient: adapt query parameters once (different term, active ingredient, or class) — then proceed with available evidence. Never retry identical parameters.
