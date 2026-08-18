@@ -773,14 +773,18 @@ def calculate_disproportionality(
 
     significant = bool(ror >= 2.0 and ci_lower > 1.0)
 
+    ror_rounded = round(ror, 2)
     return {
-        "ror":   round(ror, 2),
+        "ror":   ror_rounded,
         "ci_95": [round(ci_lower, 2), round(ci_upper, 2)],
         "statistically_significant": significant,
+        "data_available": True,   # valid counts were found — always pass ror/ci_95/case_counts to report
         "interpretation": (
-            "Statistically significant safety signal detected (ROR ≥ 2.0 and lower CI > 1.0)."
+            f"Statistically significant safety signal detected (ROR={ror_rounded}, lower CI={round(ci_lower,2)} > 1.0)."
             if significant else
-            "No statistically significant safety signal detected (within expected background noise)."
+            f"ROR computed ({ror_rounded}, 95% CI {round(ci_lower,2)}–{round(ci_upper,2)}) but below significance threshold "
+            f"(requires ROR ≥ 2.0 AND lower CI > 1.0). "
+            "Valid FAERS counts — include ROR and case_counts in the report."
         )
     }
 

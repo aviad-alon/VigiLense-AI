@@ -298,7 +298,12 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 **Returns:** `dict` with `report_markdown` string.
 **Execution Rules:**
 1. All numerical/statistical parameters MUST match upstream tool outputs exactly.
-2. **Multi-AE FAERS handling:** If you called `fetch_fda_adverse_events` for multiple AEs, pass the `ror`, `ci_95`, and `case_counts` for the PRIMARY AE (most clinically severe, or highest ROR if equal severity) into the structured parameters. Describe all other AE-specific FAERS results in `summary_findings` (Signal Assessment section). ALWAYS pass `case_counts` with the raw a/b/c/d values so the 2×2 matrix appears in the statistics table.
+2. **FAERS data pass-through — ALWAYS required:**
+   If `fetch_fda_adverse_events` returned `a > 0` (valid counts), you MUST pass `ror`, `ci_95`, and `case_counts` to this tool — regardless of whether `statistically_significant` is true or false.
+   - `statistically_significant=false` means the signal is **below threshold** — it does NOT mean "no data". The report MUST show the computed ROR and 2×2 matrix even for sub-threshold results.
+   - Set `is_significant` to the `statistically_significant` value from `calculate_disproportionality`.
+   - `data_available=true` in the disproportionality result confirms that counts exist and MUST be reported.
+3. **Multi-AE FAERS handling:** If you called `fetch_fda_adverse_events` for multiple AEs, pass the `ror`, `ci_95`, and `case_counts` for the PRIMARY AE (most clinically severe, or highest ROR if equal severity) into the structured parameters. Describe all other AE-specific FAERS results in `summary_findings` (Signal Assessment section).
 3. **`article_summaries` parameter:** INCLUDE ALL articles returned by `fetch_pubmed_advanced` or `search_drug_class_effects` — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools. For each article provide `pmid` (exact, do not fabricate) and `relevance_summary` (1–3 sentences: study design, population size, key finding with effect size and CI if reported, clinical outcome — no titles or author names). See ARTICLE SUMMARIES rules in Section 3.
 4. **`summary_findings` structure:** Follow this exact procedure before writing anything:
 
