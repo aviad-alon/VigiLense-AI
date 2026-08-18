@@ -380,7 +380,10 @@ ACTION: abort_code = "drug_not_recognized"
 REASON template: "The name '[input]' was not recognized as a pharmaceutical compound in our drug database. Please verify the drug name and re-submit. If this is a brand name, try using the generic (active ingredient) name instead."
 
 ─── CASE 5: no_literature_found ───
-TRIGGER: Both `fetch_pubmed_advanced` AND `search_drug_class_effects` returned count=0 — meaning zero articles were found for this drug and adverse event combination.
+TRIGGER: BOTH of the following must be true:
+  (a) `fetch_pubmed_advanced` returned count=0 in EVERY call made during this session, AND
+  (b) `search_drug_class_effects` also returned count=0 in every call made during this session.
+Do NOT abort if `fetch_pubmed_advanced` returned even one article in any prior call — even if `search_drug_class_effects` returned 0.
 ACTION: abort_code = "no_literature_found"
 REASON template: "No relevant medical literature was found on PubMed for '[drug name]' in relation to the investigated adverse events (search period: 2020–present). This may indicate that the signal has not been reported in recent peer-reviewed literature. Consider broadening the adverse event scope or searching manually."
 
@@ -427,6 +430,7 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     precomputed_summaries: dict[str, str] = {}  # pmid → pv_summary
     last_choice = None
     MAX_ITERATIONS = 20         # allows full investigation + report + submit
+    tool_call_counts: dict[str, int] = {}       # per-tool invocation counter
 
     for _ in range(MAX_ITERATIONS):
 
@@ -499,6 +503,22 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
             # Capture the markdown report when generated
             if fn_name == "generate_pharmacovigilance_report":
                 report_markdown = result.get("report_markdown")
+
+            # ── Loop guard: inject system message if same tool called too many times ──
+            _TERMINAL_TOOLS = {"generate_pharmacovigilance_report", "submit_final_report", "abort_investigation"}
+            if fn_name not in _TERMINAL_TOOLS:
+                tool_call_counts[fn_name] = tool_call_counts.get(fn_name, 0) + 1
+                if tool_call_counts[fn_name] >= 3:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[SYSTEM — LOOP GUARD] You have called `{fn_name}` "
+                            f"{tool_call_counts[fn_name]} times with diminishing returns. "
+                            "Do NOT call it again. You have sufficient evidence gathered so far. "
+                            "Proceed IMMEDIATELY to `generate_pharmacovigilance_report` "
+                            "to synthesize and finalize the investigation report."
+                        ),
+                    })
 
             # Record step for the UI execution trace
             steps.append({
