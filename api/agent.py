@@ -371,12 +371,15 @@ If an article studies multiple drugs and only reports aggregate class-level or c
 
 ### STRICT DEMOGRAPHIC & ENTITY ATTRIBUTION
 Every finding you write MUST inherit the **exact demographic and population context** stated in the source article — no exceptions.
-- **Age group:** If the source says "pediatric" / "adolescents" / "elderly" / "adults" — use exactly that. NEVER generalize or swap. Do not write "patients" if the source says "adolescents aged 12–17".
+- **Age group:** Use ONLY what the source explicitly states. NEVER import age context from other articles in the same report.
+  - Source says "adolescents aged 12–17" → write "adolescents aged 12–17"
+  - Source says "adult patients" → write "adult patients"
+  - Source does NOT specify age → write "patients (age group not specified in source)" — NEVER write "young patients", "adolescents", or any age inference
 - **Population size:** If the source states n=347, write n=347. Never omit or approximate.
 - **Species:** Only report findings from human studies. If the source is an animal model, do not include it.
-- **Inference forbidden:** NEVER infer that a finding from one demographic applies to another (e.g., do NOT write "this may also affect adults" based on a pediatric study).
-- WRONG: "Studies show this drug causes apathy in patients." (if source says n=23 adolescents aged 13–18)
-- CORRECT: "A case series (n=23, adolescents aged 13–18) found sertraline-associated apathy... [PMID: XXXXXXXX]"
+- **Cross-article contamination forbidden:** Each Novel Finding bullet is a sealed unit. The demographic context of other articles in the same report must NOT influence the wording of this bullet. If the investigation has a pediatric theme but THIS specific article covers general adults — write "adult patients", not "young patients".
+- WRONG: "...highlighting a notable safety concern in its use among young patients." (if source covered general FAERS population, not specifically young patients)
+- CORRECT: "...indicating a significant safety concern in the general patient population studied [PMID: XXXXXXXX]." (reflecting what the source actually says)
 
 ### SOURCE ATTRIBUTION
 - If ROR is calculated from `fetch_fda_adverse_events`, set `disproportionality_source` to "OpenFDA FAERS Database".
