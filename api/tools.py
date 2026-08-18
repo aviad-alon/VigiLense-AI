@@ -1914,42 +1914,63 @@ def generate_pharmacovigilance_report(
     # ── Discovered Signals Matrix (Broad Surveillance Mode only) ─────────────
     if surveillance_mode and discovered_events:
         _bucket_icon = {
-            "confirmed_labeled":    "🟢",
             "severity_discrepancy": "🟡",
             "potentially_unlabeled":"🔴",
         }
+        _bucket_label = {
+            "severity_discrepancy":  "Label Discrepancy — Elevated Severity",
+            "potentially_unlabeled": "Candidate Unlabeled Signal",
+        }
         matrix_rows = []
+        n_labeled = 0
         for ev in discovered_events:
-            icon    = _bucket_icon.get(ev.get("bucket", ""), "⬜")
-            _bucket_label = {
-                "confirmed_labeled":     "Established Labeled Event",
-                "severity_discrepancy":  "Label Discrepancy — Elevated Severity",
-                "potentially_unlabeled": "Candidate Unlabeled Signal",
-            }
-            label   = _bucket_label.get(ev.get("bucket", ""), ev.get("bucket", "—"))
-            n_str   = str(ev["evidence_count"]) if ev.get("evidence_count") is not None else "—"
+            # Confirmed labeled events (🟢) are baseline — skip them from the matrix.
+            # The matrix is an action-oriented view: only yellow and red signals shown.
+            if ev.get("bucket") == "confirmed_labeled":
+                n_labeled += 1
+                continue
+
+            icon  = _bucket_icon.get(ev.get("bucket", ""), "⬜")
+            label = _bucket_label.get(ev.get("bucket", ""), ev.get("bucket", "—"))
+            n_str = str(ev["evidence_count"]) if ev.get("evidence_count") is not None else "—"
 
             ror_val = ev.get("ror")
             if ror_val is not None:
-                ci_val  = ev.get("ci_95")
-                sig_val = ev.get("faers_significant")
-                ci_part = f" (CI: {ci_val[0]}–{ci_val[1]})" if ci_val and len(ci_val) == 2 else ""
+                ci_val   = ev.get("ci_95")
+                sig_val  = ev.get("faers_significant")
+                ci_part  = f" (CI: {ci_val[0]}–{ci_val[1]})" if ci_val and len(ci_val) == 2 else ""
                 sig_icon = " 🔴" if sig_val else " 🟢"
-                ror_str = f"{ror_val}{ci_part}{sig_icon}"
+                ror_str  = f"{ror_val}{ci_part}{sig_icon}"
             else:
                 ror_str = "—"
 
             matrix_rows.append(
                 f"| {ev.get('event_name', '—')} | {icon} {label} | {n_str} | {ror_str} |"
             )
-        signals_matrix_section = (
-            "## Discovered Signals Matrix\n\n"
-            "| Adverse Event | Classification | Evidence (articles) | FAERS ROR (95% CI) |\n"
-            "|---|---|---|---|\n"
-            + "\n".join(matrix_rows)
-            + "\n\n> 🟢 Established Labeled Event · 🟡 Label Discrepancy — Elevated Severity · 🔴 Candidate Unlabeled Signal\n"
-            "> ROR significance: 🔴 ≥ 2.0 AND lower CI > 1.0 · 🟢 below threshold\n\n---\n"
-        )
+
+        if matrix_rows:
+            labeled_note = (
+                f"\n> _{n_labeled} established labeled event{'s' if n_labeled != 1 else ''} "
+                "confirmed (not shown — no action required)_\n"
+                if n_labeled > 0 else "\n"
+            )
+            signals_matrix_section = (
+                "## Discovered Signals Matrix\n\n"
+                "| Adverse Event | Classification | Evidence (articles) | FAERS ROR (95% CI) |\n"
+                "|---|---|---|---|\n"
+                + "\n".join(matrix_rows)
+                + labeled_note
+                + "> 🟡 Label Discrepancy — Elevated Severity · 🔴 Candidate Unlabeled Signal\n"
+                "> ROR significance: 🔴 ≥ 2.0 AND lower CI > 1.0 · 🟢 below threshold\n\n---\n"
+            )
+        else:
+            # All events confirmed labeled — no actionable signals
+            signals_matrix_section = (
+                "## Discovered Signals Matrix\n\n"
+                f"> ✅ All {n_labeled} identified event{'s' if n_labeled != 1 else ''} are "
+                "Established Labeled Events. No novel or severity-discrepancy signals detected "
+                "in this scan.\n\n---\n"
+            )
     else:
         signals_matrix_section = ""
 

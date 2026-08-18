@@ -141,6 +141,26 @@
     .prose-report a { color:#22D3EE; text-decoration:underline; text-underline-offset:2px; }
     .prose-report a:hover { color:#7dd3fc; }
 
+    /* Article collapse toggle button */
+    .article-toggle-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin: 0.5rem 0 0.3rem;
+      padding: 5px 14px;
+      background: rgba(8,145,178,0.10);
+      border: 1px solid rgba(8,145,178,0.30);
+      border-radius: 20px;
+      color: #22D3EE;
+      font-size: 0.75rem;
+      font-family: 'Figtree', sans-serif;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .article-toggle-btn:hover {
+      background: rgba(8,145,178,0.20);
+      border-color: rgba(8,145,178,0.55);
+    }
+
     /* Drug selection buttons */
     .drug-btn {
       display: flex;
@@ -723,6 +743,7 @@
           const el = document.getElementById('response-text');
           if (rawResponse.trimStart().startsWith('#') || rawResponse.trimStart().startsWith('**')) {
             el.innerHTML = marked.parse(rawResponse);
+            applyArticleCollapse(el);
           } else {
             el.innerHTML = '<pre class="whitespace-pre-wrap">' + escapeHtml(rawResponse) + '</pre>';
           }
@@ -735,6 +756,57 @@
       } finally {
         showLoading(false);
       }
+    }
+
+    // Collapse article list to first 10, with a toggle button to expand.
+    // Runs after marked.parse() renders the report markdown into the DOM.
+    function applyArticleCollapse(container) {
+      const VISIBLE = 10;
+
+      // Find the "Literature Retrieved from PubMed" section header
+      let litHeader = null;
+      for (const h of container.querySelectorAll('h2')) {
+        if (h.textContent.includes('Literature Retrieved')) { litHeader = h; break; }
+      }
+      if (!litHeader) return;
+
+      // Walk siblings until the next h2, collecting article <p> elements.
+      // Each article paragraph starts with a bold number like "1." as its first child.
+      const articleEls = [];
+      let node = litHeader.nextElementSibling;
+      while (node && node.tagName !== 'H2') {
+        if (node.tagName === 'P') {
+          const firstStrong = node.querySelector('strong:first-child');
+          if (firstStrong && /^\d+\.$/.test(firstStrong.textContent.trim())) {
+            articleEls.push(node);
+          }
+        }
+        node = node.nextElementSibling;
+      }
+
+      if (articleEls.length <= VISIBLE) return;
+
+      const overflow = articleEls.slice(VISIBLE);
+      const nHidden  = overflow.length;
+      const parent   = overflow[0].parentNode;
+
+      // Wrap overflow articles in a hidden container
+      const wrapper = document.createElement('div');
+      wrapper.id = 'lit-article-overflow';
+      wrapper.style.display = 'none';
+      parent.insertBefore(wrapper, overflow[0]);
+      overflow.forEach(p => wrapper.appendChild(p));
+
+      // Insert toggle button just before the hidden block
+      const btn = document.createElement('button');
+      btn.className = 'article-toggle-btn';
+      btn.textContent = `▼ Show ${nHidden} more articles`;
+      btn.onclick = function () {
+        const collapsed = wrapper.style.display === 'none';
+        wrapper.style.display = collapsed ? 'block' : 'none';
+        btn.textContent = collapsed ? '▲ Show fewer articles' : `▼ Show ${nHidden} more articles`;
+      };
+      parent.insertBefore(btn, wrapper);
     }
 
   </script>
