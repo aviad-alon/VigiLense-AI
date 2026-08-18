@@ -355,7 +355,7 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
         # ── Reason: ask the LLM what to do next ──────────────────────────────
         # After a correction injection, force the LLM to call a tool (cannot write text again)
         _tool_choice = (
-            {"type": "required"}
+            "required"
             if correction_injected and report_markdown is None
             else "auto"
         )
