@@ -898,8 +898,8 @@ PUBMED_ESEARCH_URL   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fc
 PUBMED_EFETCH_URL    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_FETCH_TIMEOUT  = 20   # seconds — longer budget for efetch XML response
 SCREENING_BATCH_SIZE     = 30   # articles per LLM screening call
-MAX_PUBMED_SCREEN        = 150  # targeted mode: PT-filtered pool; Phase 1 is cheap so fetch more
-MAX_PUBMED_SCREEN_BROAD  = 200  # broad surveillance mode: larger window, recent-date sort
+MAX_PUBMED_SCREEN        = 60   # targeted mode: 2 Phase-1 batches → ~40s (was 150 → ~100s)
+MAX_PUBMED_SCREEN_BROAD  = 100  # broad surveillance mode: larger window, recent-date sort
 
 # ── PubMed Publication Type Filter ────────────────────────────────────────────
 # Appended to every investigation query to restrict results to clinical evidence
@@ -919,9 +919,10 @@ def _add_pt_filters(query_term: str) -> str:
     and pharmacovigilance database studies — eliminating editorials, letters, and
     basic-science papers before the article ever reaches the LLM screener.
 
-    Skipped if the query already contains [pt] or [mh] tags (LLM included them).
+    Skipped if the query already contains [pt], [mh], or [MeSH Terms] tags (LLM included them).
     """
-    if "[pt]" in query_term.lower() or "[mh]" in query_term.lower():
+    q = query_term.lower()
+    if "[pt]" in q or "[mh]" in q or "[mesh" in q:
         return query_term  # already filtered — don't double-apply
     return f"({query_term}) AND {_PUBMED_PT_FILTER}"
 
