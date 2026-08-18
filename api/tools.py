@@ -455,9 +455,15 @@ TOOLS = [
                             "what the label describes. Do NOT use for class interactions already labeled.\n\n"
                             "'none'        — ALL findings are Bucket 1 (confirmed_labeled) AND no Bucket 2 "
                             "severity triggers are present. Expected only when evidence fully matches the "
-                            "established safety profile with no severity or frequency discrepancy.\n\n"
+                            "established safety profile with no severity or frequency discrepancy. "
+                            "Also use 'none' when ALL evidence shows only protective effects (HR < 1, OR < 1, "
+                            "reduced risk) — protective findings are NOT safety signals per ICH E2E / GVP Module IX.\n\n"
                             "⚠️ A 'Label Discrepancy — Elevated Severity' (Bucket 2) finding NEVER produces "
-                            "signal_level = 'none'. Use 'potential' or 'significant' depending on severity."
+                            "signal_level = 'none'. Use 'potential' or 'significant' depending on severity.\n\n"
+                            "⛔ DIRECTIONAL RULE (ICH E2E / GVP Module IX): signal_level must reflect ONLY "
+                            "adverse risk direction (HR > 1, OR > 1, increased incidence). Protective findings "
+                            "(HR < 1, OR < 1, reduced risk vs. comparator) MUST NOT increase signal_level. "
+                            "Classifying a protective finding as 'potential' or 'significant' is a CLASSIFICATION ERROR."
                         )
                     },
                     "summary_findings": {
@@ -501,6 +507,11 @@ TOOLS = [
                             "IF NONE EXIST: write exactly one sentence — "
                             "'No candidate unlabeled signals identified — all findings are consistent with the established safety profile.' "
                             "Then stop. No additional bullets.\n\n"
+                            "### Efficacy / Protective Observations (include ONLY when protective effects found)\n"
+                            "Summarize findings showing protective effects (HR < 1, OR < 1, reduced risk vs. comparator). "
+                            "State the effect size, population, and study type. This section is for observational context only — "
+                            "do NOT classify protective findings as safety signals and do NOT escalate. "
+                            "If no protective findings exist, omit this section entirely.\n\n"
                             "### Evidence Quality & Signal Conclusion\n"
                             "≤3 bullets: ROR + FAERS demographics if available, evidence quality grade, "
                             "final classification sentence (e.g., 'Established Labeled Event — no escalation required'). "
@@ -522,7 +533,10 @@ TOOLS = [
                             "regardless of FAERS ROR magnitude.\n"
                             "  signal_level='none'        → Only then is 'No further action "
                             "required' acceptable. Briefly state why (all AEs confirmed labeled, "
-                            "no severity discrepancy, FAERS below threshold)."
+                            "no severity discrepancy, FAERS below threshold). "
+                            "When signal_level='none' is due to protective findings only, write: "
+                            "'No safety escalation required — evidence shows protective association only "
+                            "(HR < 1). Findings documented under Efficacy / Protective Observations.'"
                         )
                     },
                     "disproportionality_source": {
@@ -599,7 +613,11 @@ TOOLS = [
                             "Broad Surveillance Mode only. List ALL adverse events discovered across "
                             "retrieved literature and FAERS. One entry per unique AE. "
                             "For Bucket 3 AEs: MUST include ror, ci_95, and faers_significant "
-                            "from the calculate_disproportionality result after fetch_fda_adverse_events."
+                            "from the calculate_disproportionality result after fetch_fda_adverse_events.\n\n"
+                            "⛔ DIRECTIONAL RULE: Do NOT include protective findings (HR < 1, OR < 1, "
+                            "reduced risk vs. comparator) in this list. Protective findings are NOT adverse events "
+                            "and must NOT appear in the signals matrix. Document them in summary_findings under "
+                            "'### Efficacy / Protective Observations' instead."
                         ),
                         "items": {
                             "type": "object",
@@ -616,6 +634,18 @@ TOOLS = [
                                         "potentially_unlabeled"
                                     ],
                                     "description": "3-bucket classification result for this AE."
+                                },
+                                "direction": {
+                                    "type": "string",
+                                    "enum": ["risk", "protective", "unknown"],
+                                    "description": (
+                                        "Evidence direction for this finding. "
+                                        "'risk' = increased incidence / HR > 1 / OR > 1 (adverse). "
+                                        "'protective' = reduced incidence / HR < 1 / OR < 1 (beneficial). "
+                                        "'unknown' = no quantitative measure. "
+                                        "Protective findings should NOT be in this list (see discovered_events description), "
+                                        "but if included, direction='protective' prevents them from triggering safety escalation."
+                                    )
                                 },
                                 "evidence_count": {
                                     "type": "integer",
@@ -2085,18 +2115,29 @@ def _derive_signal_level(
       3. Any Bucket 3 (potentially_unlabeled) AE in discovered_events   → "potential"
       4. Any Bucket 2 (severity_discrepancy) AE in discovered_events    → "potential"
       5. LLM judgment (passed through as-is for targeted-mode nuances)
+
+    NOTE: Protective-direction events (direction="protective", HR < 1 / OR < 1) are excluded
+    from the floor calculation per ICH E2E / GVP Module IX — they are not safety signals.
     """
     python_floor = "none"
+
+    def _is_protective(ev: dict) -> bool:
+        """Return True if this event is a protective finding that must not drive escalation."""
+        return ev.get("direction") == "protective"
 
     if is_significant:
         python_floor = "significant"
     elif discovered_events:
         for ev in discovered_events:
+            if _is_protective(ev):
+                continue  # protective findings never drive FAERS escalation
             if ev.get("faers_significant"):
                 python_floor = "significant"
                 break
         if python_floor == "none":
             for ev in discovered_events:
+                if _is_protective(ev):
+                    continue  # protective findings never drive signal floor
                 if ev.get("bucket") in ("potentially_unlabeled", "severity_discrepancy"):
                     python_floor = "potential"
                     break

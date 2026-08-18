@@ -320,6 +320,34 @@ COMPOSITE SIGNAL LEVEL (signal_level):
 is_significant = statistical only (ROR). signal_level = composite expert judgment.
 ⚠️ A "Label Discrepancy — Elevated Severity" (Bucket 2) finding NEVER produces signal_level = "none". Always "potential" or "significant".
 
+DIRECTIONAL SIGNAL RULE (ICH E2E / GVP Module IX — mandatory):
+A Safety Signal is STRICTLY defined as evidence of increased risk, adverse drug reaction, or unexpected harm.
+Protective effects (HR < 1, OR < 1, reduced incidence vs. comparator) are NEVER Safety Signals.
+
+Decision tree — apply before setting signal_level:
+
+  Case A — ALL evidence shows protective or neutral effect (HR < 1, OR < 1, reduced risk):
+    → signal_level = "none"
+    → recommendations = "No safety escalation required — findings show protective association only."
+    → In summary_findings: include a "### Efficacy / Protective Observations" subsection summarizing
+      the protective findings (HR values, populations studied, effect size). Do NOT write these
+      under Novel Signal Assessment. Do NOT escalate.
+
+  Case B — MIXED evidence (protective in overall cohort, elevated risk in a specific subgroup):
+    → Isolate the risk subgroup ONLY for signal classification.
+    → signal_level and recommendations reflect ONLY the risk element of the subgroup.
+    → Protective component goes under "### Efficacy / Protective Observations" — clearly separated.
+    → Do NOT average protective and risk effects to conclude "no signal" if a real risk subgroup exists.
+
+  Case C — FAERS ROR > 1 AND literature shows only protective effect:
+    → Report both independently. FAERS signal stands on its own (pharmacovigilance data ≠ RCT).
+    → Do NOT cancel the FAERS signal because literature is protective (different populations/methods).
+    → signal_level is driven by the FAERS ROR (significant or potential as usual).
+    → In summary_findings: document the discordance explicitly. Note literature direction vs. FAERS direction.
+
+⚠️ NEVER classify a protective finding (HR < 1, OR < 1) as signal_level = "potential" or "significant".
+   Doing so violates GVP Module IX and is a CLASSIFICATION ERROR.
+
 ARTICLE SUMMARIES (article_summaries):
 All articles have passed a strict Phase 2 gate — only direct patient-level AE evidence is included.
 Provide pmid + relevance_summary per article. 1–3 sentences: case count, dose/timing, clinical outcome. No titles or author names.
