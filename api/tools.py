@@ -395,14 +395,15 @@ TOOLS = [
                             "This drives the master report header and subject table — set it carefully:\n\n"
                             "'significant' — FAERS ROR ≥ 2.0 with lower CI > 1.0. "
                             "The statistical threshold is met and constitutes a confirmed signal.\n\n"
-                            "'potential'   — FAERS is negative or not calculable, BUT actionable literature exists "
-                            "with novel case reports or clinical findings NOT already fully documented "
-                            "in the FDA label / internal KB for this specific adverse event. "
-                            "Use this whenever literature evidence warrants safety team review — "
-                            "even a single unlabeled case report qualifies.\n\n"
-                            "'none'        — Use ONLY when BOTH: (a) FAERS shows no disproportionality, "
-                            "AND (b) no novel unlabeled actionable literature was found. "
-                            "If any novel finding exists, do NOT use 'none'."
+                            "'potential'   — FAERS is negative or not calculable, BUT at least one confirmed "
+                            "Bucket 3 finding exists (AE absent from label by name AND not covered by any "
+                            "class-level or mechanism-level statement). Do NOT use for class interactions "
+                            "already in the label — a study on ibuprofen is NOT novel if the label mentions 'NSAIDs'.\n\n"
+                            "'none'        — All findings are Bucket 1 (confirmed_labeled) or Bucket 2 "
+                            "(severity_discrepancy). This is the correct and expected verdict for "
+                            "well-characterized drugs with established safety profiles — it signals a "
+                            "thorough investigation, not a missed signal. Do NOT force 'potential' when "
+                            "all retrieved evidence is already labeled."
                         )
                     },
                     "summary_findings": {
@@ -414,14 +415,17 @@ TOOLS = [
                             "or a clinically adjacent finding in the same organ system/mechanism. "
                             "Do NOT include findings from unrelated AE categories (e.g., suicidality warnings "
                             "when investigating bruxism) even if they appear in the same FDA label or KB chunk.\n\n"
-                            "### Internal KB / FDA Label Baseline — what the label already documents about the investigated AE "
-                            "or adjacent organ-system findings. Exclude unrelated warnings.\n"
-                            "### Novel Findings — new AE findings not in the label. "
-                            "Each bullet cites one finding with [PMID: XXXXXXXX] (auto-converted to [N]). "
-                            "Only use PMIDs actually returned by PubMed tools.\n"
-                            "### Known / Expected Findings — label-consistent findings RELATED TO THE INVESTIGATED AE to discard. "
-                            "Exclude unrelated boxed warnings or contraindications.\n"
-                            "### Signal Assessment — evidence quality, signal strength, confidence — scoped to investigated AE only.\n"
+                            "### Internal KB / FDA Label Baseline — document what the FDA label covers: named AEs, "
+                            "class-level interactions (e.g., 'label mentions NSAIDs as a class — all NSAIDs are confirmed_labeled'), "
+                            "and mechanism-based warnings. This is the ground truth all literature is measured against.\n"
+                            "### Novel Findings (Bucket 3 — potentially_unlabeled only) — ONLY findings where the AE is "
+                            "absent from the label by name AND not covered by any class-level or mechanism-level statement. "
+                            "Each bullet cites [PMID: XXXXXXXX]. If none: write 'No novel unlabeled findings identified — "
+                            "all retrieved evidence is consistent with the established safety profile.'\n"
+                            "### Known / Expected Findings (Buckets 1 & 2) — label-consistent findings (Bucket 1) and "
+                            "severity discrepancies (Bucket 2 — note these explicitly). Related to the investigated AE only.\n"
+                            "### Signal Assessment — state explicitly which bucket each key finding was assigned to and why. "
+                            "Note class-level label coverage where relevant.\n"
                             "Do NOT include article titles or author names."
                         )
                     },
@@ -463,6 +467,15 @@ TOOLS = [
                                         "Example: 'Case series (n=3, males 45–62): sildenafil 50–100 mg "
                                         "associated with acute NAION onset within 24h; partial visual recovery in 2/3 cases.' "
                                         "STRICT ISOLATION: derived SOLELY from that article's abstract — never borrow from another."
+                                    )
+                                },
+                                "study_type": {
+                                    "type": "string",
+                                    "description": (
+                                        "Study design from Phase 2 gate "
+                                        "(e.g. 'Systematic Review / Meta-Analysis', 'RCT', 'Cohort Study', "
+                                        "'Case-Control Study', 'Case Report / Case Series', 'Pharmacovigilance DB Study'). "
+                                        "Use the value from the tool result if available."
                                     )
                                 }
                             },
@@ -904,7 +917,10 @@ def _extract_article_summaries(
             "IF EXCLUDED → respond with ONLY: {\"include\": false}\n"
             "Do NOT write a summary for excluded articles.\n\n"
             "IF INCLUDED → respond with:\n"
-            "{\"include\": true, \"summary\": \"<your summary here>\"}\n\n"
+            "{\"include\": true, \"summary\": \"<your summary here>\", \"study_type\": \"<design>\"}\n\n"
+            "STUDY TYPE OPTIONS (choose the most specific that applies):\n"
+            "  'Systematic Review / Meta-Analysis', 'RCT', 'Cohort Study', 'Case-Control Study',\n"
+            "  'Case Report / Case Series', 'Pharmacovigilance DB Study', 'Other'\n\n"
             "SUMMARY REQUIREMENTS (included articles only):\n"
             "  - 1-3 sentences capturing the key findings that will appear in the final "
             "pharmacovigilance report.\n"
@@ -944,6 +960,9 @@ def _extract_article_summaries(
                     summary = extracted.get("summary", "")
                     if isinstance(summary, str) and summary.strip():
                         art["pv_summary"] = summary.strip()
+                    study_type = extracted.get("study_type", "")
+                    if isinstance(study_type, str) and study_type.strip():
+                        art["pv_study_type"] = study_type.strip()
                 else:
                     art["pv_include"] = False
         except Exception as exc:
