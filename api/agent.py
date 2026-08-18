@@ -295,23 +295,28 @@ STRICT ISOLATED EXTRACTION: Every relevance_summary derives SOLELY from that art
 SELF-CHECK: Confirm no summary contains facts from a different PMID before submitting.
 DEDUPLICATION: Duplicate = identical PMID or identical title only. Different papers on the same topic are NOT duplicates. Never write "(Duplicate...)" in any relevance_summary.
 
-`summary_findings` STRUCTURE (exact subheadings, bullet points within each):
+`summary_findings` STRUCTURE — THREE sections, strictly non-redundant:
+
+⛔ ANTI-REDUNDANCY RULE (enforced across all three sections):
+- Each safety fact appears at most ONCE. Do not restate the same event or finding in multiple sections.
+- Do not repeat article content from the Literature section — cite by [N] number only.
+- Do not echo Signal Conclusion content back into Label Safety Baseline or vice versa.
+
+EMPTY-STATE RULE: If no literature was retrieved AND no novel FAERS signal exists, write one concise paragraph under "### Label Safety Baseline" only. Skip the other two sections entirely — do NOT write "no findings" under multiple headings.
 
 SCOPE RULE:
 - Targeted Mode: every bullet concerns the investigated AE or adjacent organ-system findings only. Exclude unrelated categories even if they appear in the label.
-- Broad Surveillance Mode: cover ALL discovered AEs. The discovered_events matrix handles the summary table; summary_findings provides narrative context per classification.
+- Broad Surveillance Mode: cover ALL discovered AEs. The discovered_events matrix handles the summary table; summary_findings provides narrative context per classification tier.
 
-### FDA Label Review
-What the label covers: named AEs, class-level interactions (e.g., "label identifies NSAIDs as a class interaction — all NSAIDs are Established Labeled Events"), and mechanism-based warnings. Ground truth for all classifications.
+### Label Safety Baseline
+What the FDA label covers for this drug/AE: named AEs, class-level statements (e.g., "label covers all NSAIDs as a class — all are Established Labeled Events"), and mechanism-based warnings. Include Bucket 2 severity discrepancies here — note explicitly as "Label Discrepancy — Elevated Severity". ≤5 bullets, most clinically relevant only. Write ALL label/baseline content HERE — do not repeat it in the sections below.
 
-### Candidate Unlabeled Signals
-ONLY AEs absent from the label by name AND not covered by any class or mechanism statement. Each bullet cites [PMID: XXXXXXXX] (auto-converted to [N]). If none: write "No candidate unlabeled signals identified — all retrieved evidence is consistent with the established safety profile."
+### Novel Signal Assessment
+Candidate Unlabeled Signals (Bucket 3) ONLY — AEs absent from the label by name AND not covered by any class or mechanism statement. Each bullet cites [PMID: XXXXXXXX] (auto-converted to [N]) or FAERS ROR.
+IF NONE EXIST: write exactly one sentence — "No candidate unlabeled signals identified — all findings are consistent with the established safety profile." Then stop — no additional bullets.
 
-### Established & Expected Events
-Established labeled events and label discrepancies (note explicitly as "Label Discrepancy — Elevated Severity"). Related to the investigated AE only.
-
-### Signal Assessment
-Summarize evidence quality and signal classification using professional terminology only. No internal classification names. Include ROR and FAERS demographics if available.
+### Evidence Quality & Signal Conclusion
+≤3 bullets: ROR + FAERS demographics if available, evidence quality grade, final classification sentence (e.g., "Established Labeled Event — no escalation required"). Cross-reference the Literature section by [N] citation only — do NOT restate article content already shown above.
 
 SOURCE ATTRIBUTION: disproportionality_source = "OpenFDA FAERS Database" or "Literature / PubMed (PMID: X)".
 
