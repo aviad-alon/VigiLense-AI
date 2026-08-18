@@ -876,6 +876,14 @@ def _screen_articles_llm(
     # ── Phase 2: Per-article isolated summary extraction ─────────────────────
     _extract_article_summaries(relevant, investigation_context)
 
+    # ── Post-Phase-2 filter: drop articles where Phase 2 found no drug-specific data ──
+    # Phase 2 writes "NO_DRUG_DATA" when the investigated drug is not a primary subject.
+    # These articles passed Phase 1 by mistake and must not appear in the final report.
+    relevant = [
+        a for a in relevant
+        if (a.get("pv_summary") or "") != "NO_DRUG_DATA"
+    ]
+
     return relevant
 
 
@@ -916,9 +924,11 @@ def _extract_article_summaries(
             "================================\n\n"
             "=== DRUG ISOLATION RULE ===\n"
             "The investigation concerns ONLY the primary drug named in the Investigation Context above.\n"
-            "If this article studies multiple drugs, report ONLY findings explicitly attributed to the investigated drug.\n"
-            "Do NOT report effect sizes, odds ratios, hazard ratios, or outcomes for other drugs — even if stated in the same abstract.\n"
-            "If the abstract contains no outcome data specific to the investigated drug (only class or comparator data), write: 'No drug-specific outcome data found for the investigated drug.'\n"
+            "TWO SCENARIOS:\n"
+            "A) The investigated drug IS the primary subject of this article → always write a meaningful summary. "
+            "Report the study design, population, and main finding for that drug — even if exact statistics are not available. "
+            "Do NOT report effect sizes or outcomes for other drugs mentioned in the same abstract.\n"
+            "B) The investigated drug is NOT a primary subject (e.g., it only appears as a comparator, a brief mention, or is not named at all) → write exactly: 'NO_DRUG_DATA'\n"
             "===========================\n\n"
             f"=== ARTICLE | PMID: {pmid} ===\n"
             f"Title: {title}\n"
@@ -941,8 +951,11 @@ def _extract_article_summaries(
                     raw = raw[4:].strip()
             extracted = json.loads(raw)
             if isinstance(extracted, dict):
-                if isinstance(extracted.get("summary"), str) and extracted["summary"].strip():
-                    art["pv_summary"] = extracted["summary"].strip()
+                summary = extracted.get("summary", "").strip()
+                if summary and summary != "NO_DRUG_DATA":
+                    art["pv_summary"] = summary
+                elif summary == "NO_DRUG_DATA":
+                    art["pv_summary"] = "NO_DRUG_DATA"   # used by post-Phase-2 filter
         except Exception as exc:
             print(f"[Article summary extraction error — PMID {pmid}] {exc}")
 
