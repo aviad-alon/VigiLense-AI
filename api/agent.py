@@ -326,6 +326,12 @@ Classify as **Novel** if the article adds ANY of: a new specific presentation, a
 - WRONG: Article identifies intracranial hemorrhage leading to LAA occlusion implant → "Known — ICH is in label"
 - CORRECT: → "Novel — clinical context (ICH severity requiring device intervention) extends label data"
 
+**(C) PHARMACOVIGILANCE DISPROPORTIONALITY STUDIES — always Novel:**
+If a retrieved article is itself a pharmacovigilance disproportionality analysis (FAERS, VigiBase, EudraVigilance, etc.) that reports a **statistically significant ROR, PRR, or IC** (ROR ≥ 2.0 AND lower 95% CI > 1.0) for the investigated drug — this IS a safety signal by definition. Classify as **Novel** regardless of label content.
+⚠️ The label documenting a broad symptom (e.g. "myalgias") does NOT make a disproportionality finding for a specific serious AE (e.g. rhabdomyolysis) "Known." Broad label symptoms and statistically-confirmed spontaneous-reporting signals are distinct — never collapse them.
+- WRONG: Paper reports ROR=2.52 for rhabdomyolysis → "Known — myalgias in label"
+- CORRECT: → "Novel — published FAERS disproportionality analysis (ROR=2.52, 95% CI 2.28–2.78, N=397 reports) establishes a significant spontaneous-reporting signal for rhabdomyolysis, distinct from label-documented myalgias as a symptom of lactic acidosis"
+
 **(B) DDI DIRECTIONALITY — mandatory for any drug interaction finding:**
 For every drug-drug interaction article, explicitly determine the DIRECTION of effect before classifying:
 - Does the interacting drug INCREASE the investigated drug's effect? → may cause the investigated AE (bleeding, toxicity, etc.)
@@ -356,11 +362,15 @@ AEs NOT in literature: acute kidney injury  ← DO NOT call FAERS for these
 ```
 
 **Sub-step B — Call FAERS only for the "found in literature" list:**
-For each AE in that list, call `fetch_fda_adverse_events` with the correct MedDRA Preferred Term.
+First, scan all retrieved article summaries for any **explicitly reported disproportionality statistic** (ROR, PRR, IC) for the drug-AE pair under investigation. Record these as literature-sourced values:
+`AE: [term] → ROR=X.X (CI Y.Y–Z.Z) — source: [PMID: XXXXXXXX]`
+
+Then, for each AE in the "found in literature" list, call `fetch_fda_adverse_events` with the correct MedDRA Preferred Term to obtain first-hand FAERS counts.
 Do NOT call FAERS for any AE in the "NOT in literature" list — regardless of the original user query.
 
-Build an internal FAERS results table from the tool responses (ror, ci_lower, ci_upper, is_significant are returned directly):
-`AE: [MedDRA term] → N=XXXX cases, ROR=X.X (CI Y.Y–Z.Z), significant: yes/no`
+Build an internal FAERS results table combining tool responses and literature-sourced values:
+`AE: [MedDRA term] → N=XXXX cases, ROR=X.X (CI Y.Y–Z.Z), significant: yes/no, source: [OpenFDA tool / PMID: XXXXXXXX]`
+If the tool returns a=0 for an AE but a retrieved article reports a valid ROR — include the literature-reported value in the table, citing the PMID. Do NOT write "No FAERS data" when a published disproportionality study already provides it.
 Only after this table is complete may you write the sections below.
 
 ```markdown
@@ -406,7 +416,7 @@ Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 ### Signal Assessment
 Write 4-6 sentences of expert professional synthesis. Your task is to weigh the totality of evidence you gathered — literature findings (quantity, severity, consistency across sources), FAERS data (ROR, case volume, demographics), and FDA Label/KB baseline — and produce a coherent judgment about the signal's strength and clinical significance.
 FAERS data is a required input to your reasoning, not a separate section. Integrate it into your argument: where literature and FAERS reinforce each other, say so and explain what that convergence implies; where they diverge, explain why and what the discrepancy means for confidence.
-⚠️ **NUMERICAL GROUNDING RULE:** Every ROR value, confidence interval, or case count you write in this section MUST be copied verbatim from a tool response in this session. If FAERS returned `cases_drug_event = 0` or the tool was not called, write "No FAERS data available for this AE" — NEVER invent or estimate a number. This rule overrides any instinct to fill a gap with a plausible-sounding value.
+⚠️ **NUMERICAL GROUNDING RULE:** Every ROR value, confidence interval, or case count you write in this section MUST come from either: (a) a tool response in this session (primary), or (b) a value explicitly stated verbatim in a retrieved PubMed article's abstract (secondary — cite PMID, e.g. "per [PMID: XXXXXXXX], ROR=2.52 (95% CI 2.28–2.78)"). If the FAERS tool returned `cases_drug_event = 0` AND no retrieved article reports a quantitative disproportionality statistic, write "No FAERS data available for this AE" — NEVER invent or estimate a number. This rule overrides any instinct to fill a gap with a plausible-sounding value.
 This is your professional judgment — not a mechanical summary of each source. Think, then write.
 ```
 
