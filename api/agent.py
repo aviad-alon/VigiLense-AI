@@ -200,7 +200,7 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 ---
 
 ### TOOL SPECIFICATION: query_knowledge_base
-**Signature:** `query_knowledge_base(query: str, section: str = None)`
+**Signature:** `query_knowledge_base(drug_name: str, query: str, section: str = None)`
 **Returns:** `dict` with `chunks` (list of relevant text snippets) and `drug_in_formulary` (bool).
 **Purpose:** Searches official FDA drug labeling documents stored in Pinecone (RAG).
 **Execution Rules:**
@@ -252,11 +252,11 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 ---
 
 ### TOOL SPECIFICATION: search_drug_class_effects
-**Signature:** `search_drug_class_effects(pharmacological_class: str, adverse_event: str, investigation_context: str)`
+**Signature:** `search_drug_class_effects(drug_class: str, adverse_event: str, investigation_context: str)`
 **Returns:** `dict` with `results` (list of peer-reviewed articles discussing class-wide toxicities) and `class_summary`.
 **Purpose:** Investigates whether an adverse event is a known class-wide phenomenon.
 **Execution Rules:**
-1. Extract `pharmacological_class` from `get_drug_profile` before invoking this tool.
+1. Extract `drug_class` from `get_drug_profile` (`drug_class` field) before invoking this tool.
 2. Pass the same `investigation_context` format as `fetch_pubmed_advanced`.
 3. Work strictly with articles in the returned results. Never fabricate PMIDs or class associations.
 
