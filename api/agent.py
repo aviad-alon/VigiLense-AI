@@ -406,6 +406,7 @@ Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 ### Signal Assessment
 Write 4-6 sentences of expert professional synthesis. Your task is to weigh the totality of evidence you gathered — literature findings (quantity, severity, consistency across sources), FAERS data (ROR, case volume, demographics), and FDA Label/KB baseline — and produce a coherent judgment about the signal's strength and clinical significance.
 FAERS data is a required input to your reasoning, not a separate section. Integrate it into your argument: where literature and FAERS reinforce each other, say so and explain what that convergence implies; where they diverge, explain why and what the discrepancy means for confidence.
+⚠️ **NUMERICAL GROUNDING RULE:** Every ROR value, confidence interval, or case count you write in this section MUST be copied verbatim from a tool response in this session. If FAERS returned `cases_drug_event = 0` or the tool was not called, write "No FAERS data available for this AE" — NEVER invent or estimate a number. This rule overrides any instinct to fill a gap with a plausible-sounding value.
 This is your professional judgment — not a mechanical summary of each source. Think, then write.
 ```
 
