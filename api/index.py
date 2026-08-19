@@ -89,7 +89,7 @@ def get_team_info():
 def get_agent_info():
     return {
         "description": (
-            "VigiLenseAI is an autonomous pharmacovigilance agent built on the ReAct "
+            "VigiLenseAI is a pharmacovigilance AI Agent built on the ReAct "
             "(Reason \u2192 Act \u2192 Observe) architecture. "
             "Given a query about a drug in the company's portfolio, the agent independently "
             "determines which tools to call at each iteration from a suite of 9 specialized tools: "
