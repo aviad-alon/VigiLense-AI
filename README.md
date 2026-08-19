@@ -14,33 +14,22 @@
 
 ### The problem
 
-Every pharmaceutical company is legally required to continuously monitor the safety of its approved drugs -a discipline known as pharmacovigilance. When a potential adverse drug event surfaces (from a patient report, a clinical study, or a regulatory signal), a safety analyst must:
+Pharmaceutical companies are required to continuously monitor the safety of their approved drugs. When a potential safety signal appears, a safety team member typically has to search medical literature, check the FDA drug label, pull adverse event data from FAERS, run a statistical calculation, and write a structured report - all manually, across multiple tools and tabs.
 
-- Search recent medical literature for relevant findings
-- Retrieve the current FDA drug label to understand the known risk profile
-- Query real-world adverse event databases (such as FDA FAERS) to quantify how frequently the event is reported
-- Assess whether the finding constitutes a novel, unexpected signal -or a known, expected one
-- Synthesize all of the above into a structured safety report following international standards (CIOMS/ICH E2D)
-
-This process is time-consuming, repetitive, and highly sensitive to human error. A single missed citation or unsupported conclusion can have serious regulatory consequences.
-
-### What was done before
-
-Until now, this work was done almost entirely manually. Analysts would open PubMed in one tab, FDA databases in another, and a Word template in a third -copying, cross-referencing, and writing by hand. Some organizations use rules-based tools that automate parts of the literature search, but none integrate the full pipeline end-to-end, and none can reason about findings the way a trained analyst would.
+It's slow, repetitive, and easy to miss things.
 
 ### Our solution
 
-VigiLenseAI is an AI agent that conducts the full pharmacovigilance investigation from a single natural-language query. The analyst types what they want to investigate -and the agent searches the literature, retrieves the drug profile, queries FAERS, calculates the statistical signal, and writes the report, all on its own.
+VigiLenseAI is an AI agent that runs the full investigation from a single query. You type what you want to look into, and the agent handles the rest: searching PubMed, retrieving the drug profile, querying FAERS, calculating the signal strength, and generating a structured report.
 
-The system is designed to operate within a **specific company's drug portfolio**. It only investigates drugs that the company has pre-loaded into its internal knowledge base. If a drug is not in the company's portfolio, the agent refuses the query immediately -ensuring that resources are spent only on drugs the company is actually responsible for monitoring, and that the knowledge base used for comparison is always internally consistent.
+It only works with drugs that belong to the company's portfolio. If a drug isn't in the knowledge base, the agent says so immediately and stops.
 
-### Why this matters
+### Why it's useful
 
-- **Speed** - an investigation that takes an analyst hours is completed in under a minute
-- **Consistency** - every report follows the same structure and citation standards, regardless of who ran the query
-- **Traceability** - every claim in the report links back to a real source retrieved during the investigation; nothing is inferred or fabricated
-- **Scalability** - the same agent can handle hundreds of concurrent investigations without additional headcount
-- **Auditability** - every step the agent took is logged and visible, making it easy to review, challenge, or reproduce any finding
+- **Faster** - what used to take hours now takes under a minute
+- **Consistent** - every report follows the same structure, every time
+- **Traceable** - every claim in the report links to a real source retrieved during the run
+- **Transparent** - every step the agent took is logged and visible
 
 ## How it works
 
