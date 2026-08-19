@@ -176,14 +176,21 @@ Treat each tool response as new evidence that reshapes your investigative trajec
 * **Track Knowledge Gaps:** Continuously monitor what evidence is missing (e.g., "I have identified 3 novel AEs from literature — I still need FAERS validation for each one").
 
 ### COMPOSITE SIGNAL CLASSIFICATION LOGIC (`signal_level`)
-This field drives the master report header. It MUST reflect BOTH evidence sources:
+This field drives the master report header. It MUST reflect BOTH evidence sources AND the FDA Label/KB baseline.
 
-* **`significant`**: FAERS ROR ≥ 2.0 AND lower 95% CI > 1.0. Statistical threshold confirmed.
-* **`potential`**: FAERS disproportionality is negative, uncalculable, or unavailable, BUT at least one novel recent publication identifies an AE not documented in the official FDA label/KB for this specific AE. This includes: unlabeled case reports, case series, or clinical trial findings. Use this whenever your Regulatory Recommendation is to escalate or review.
+**Step 1 — Check the Label baseline first:**
+Before assigning `signal_level`, ask: "Is this AE already documented in the FDA label / KB for this drug?"
+
+**Step 2 — Classify:**
+* **`significant`**: The AE is **NOT already fully documented** in the FDA label/KB **AND** FAERS ROR ≥ 2.0 with lower CI > 1.0. Reserved for newly discovered or unlabeled signals with statistical confirmation.
+* **`potential`**: Use when ANY of the following is true:
+  - The AE IS in the label but literature identifies a novel presentation, population, or clinical context not captured in the label (even with significant FAERS ROR — the FAERS signal reflects the known labeled risk, not a new one)
+  - The AE is NOT in the label and literature has novel findings but FAERS is below threshold or unavailable
+  - Use this whenever your Regulatory Recommendation is to escalate or review an unlabeled extension
 * **`none`**: Use ONLY when BOTH: (a) FAERS shows no disproportionality or is uncalculable, AND (b) literature contains NO novel findings beyond what the label already documents.
 * **TIE-BREAKER RULE:** When in doubt between `"potential"` and `"none"`, ALWAYS classify as `"potential"`. A safety officer reading "none" while you recommend escalation is a compliance risk.
 
-**RULE:** `is_significant` is STATISTICAL ONLY (ROR threshold). `signal_level` is your expert composite judgment.
+**RULE:** `is_significant` is STATISTICAL ONLY (ROR threshold). `signal_level` is your expert composite judgment that integrates statistics, literature novelty, AND label baseline.
 
 ### HARD BOUNDARIES & TERMINATION RULES
 
@@ -340,9 +347,24 @@ NEVER classify a DDI that reduces drug efficacy as a signal for the drug's prima
 You MUST do this for ALL PMIDs. Only after completing this list proceed to FAERS validation.
 
 **FAERS VALIDATION STEP (mandatory — after enumeration, before writing):**
-From your enumeration table above, compile the list of clinically distinct AEs that appear in AT LEAST ONE literature article. Call `fetch_fda_adverse_events` for each of those AEs — and ONLY those.
-**CRITICAL: Do NOT call FAERS for AEs that had zero literature support.** If the original user query mentioned an AE but no articles discussed it → skip FAERS for that AE entirely. FAERS validates what literature found, not what the user asked.
-Build an internal FAERS results table from the tool responses (ror, ci_lower, ci_upper, is_significant are returned directly — no separate `calculate_disproportionality` call needed):
+
+**Sub-step A — Build the literature AE list explicitly:**
+Scan your enumeration table and write:
+```
+AEs found in literature: [list only AEs that appear in ≥1 article]
+AEs NOT in literature (user query only): [list any query terms with zero articles]
+```
+Example:
+```
+AEs found in literature: angioedema, intestinal angioedema
+AEs NOT in literature: acute kidney injury  ← DO NOT call FAERS for these
+```
+
+**Sub-step B — Call FAERS only for the "found in literature" list:**
+For each AE in that list, call `fetch_fda_adverse_events` with the correct MedDRA Preferred Term.
+Do NOT call FAERS for any AE in the "NOT in literature" list — regardless of the original user query.
+
+Build an internal FAERS results table from the tool responses (ror, ci_lower, ci_upper, is_significant are returned directly):
 `AE: [MedDRA term] → N=XXXX cases, ROR=X.X (CI Y.Y–Z.Z), significant: yes/no`
 Only after this table is complete may you write the sections below.
 
@@ -362,11 +384,21 @@ If the Key Finding contains specific drug names, numeric values (ROR, HR, CI, do
 - WRONG: "A study found notable drug interactions with warfarin [6]."
 - CORRECT: "Concomitant use of warfarin with cephalexin, sulfamethoxazole-trimethoprim, and furosemide was associated with significantly increased major bleeding risk in nursing home residents [PMID: XXXXXXXX]."
 
-**FAERS INTEGRATION — mandatory for every Novel Finding bullet:**
-After each bullet's clinical finding, append the FAERS result and what it means for signal strength — in your own professional words based on the actual numbers:
-`→ FAERS: ROR=X.X (95% CI Y.Y–Z.Z), N=XXXX reports — [your interpretation: does this support, qualify, or contrast with the literature finding? what does the case volume and ROR level imply about signal strength?]`
-If FAERS was not called for this AE (zero literature support for it): do not append anything.
-If FAERS returned a=0 after synonym retry: `→ FAERS: no spontaneous reporting detected — literature-first signal.`
+**FAERS SUMMARY BLOCK — add once, after all Novel Finding bullets:**
+After writing ALL Novel Finding bullets, close the section with a single consolidated FAERS block (one line per AE queried in FAERS):
+
+```
+**FAERS Spontaneous Reporting Summary (MedDRA PT level):**
+- [MedDRA PT queried]: ROR=X.X (95% CI Y.Y–Z.Z), N=XXXX reports — [professional interpretation of signal strength]
+- [Next AE term if applicable]: ROR=... — [interpretation]
+```
+
+If FAERS returned a=0 for an AE: `- [AE term]: No spontaneous reports detected — literature-first signal.`
+
+⚠️ CRITICAL — DO NOT attach FAERS inline to individual bullets:
+A FAERS query for "angioedema" returns ALL angioedema reports across all sub-types (facial, pharyngeal, intestinal, etc.). The resulting ROR does NOT specifically validate a single case report about intestinal angioedema only.
+Attaching a broad-population ROR (N=8,525) to a specific single-patient case report implies false precision — this is data pollution.
+**Rule: one FAERS block at the end of Novel Findings = correct. → FAERS line after each individual bullet = forbidden.**
 
 You MAY cross-reference PMIDs that converge on the same signal.
 Prioritise by clinical severity (life-threatening first, then serious, then mild).
