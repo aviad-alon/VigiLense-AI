@@ -10,18 +10,6 @@
 
 ---
 
-## What it does
-
-VigiLenseAI is an autonomous pharmacovigilance agent built on the ReAct (Reason → Act → Observe) architecture. Given a query about a drug in the company's portfolio, the agent independently determines which tools to call at each iteration from a suite of 9 specialized tools:
-
-| Category | Capabilities |
-|----------|-------------|
-| **Data Retrieval** | Biomedical literature search (PubMed) · FDA adverse event database (OpenFDA FAERS) · Internal vector knowledge base (Pinecone RAG) |
-| **Clinical & Statistical Analysis** | Disproportionality metrics (ROR and 95% CI) · Drug profile cross-referencing · FDA label comparison |
-| **Output** | Structured safety risk assessment reports in CIOMS/ICH E2D format, tailored for clinical safety teams |
-
----
-
 ## Overview
 
 ### The problem
