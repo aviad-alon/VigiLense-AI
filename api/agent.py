@@ -182,7 +182,7 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 Before assigning `signal_level`, ask: "Is this AE already documented in the FDA label / KB for this drug?"
 
 **Step 2 — Classify:**
-* **`significant`**: The AE is **NOT already fully documented** in the FDA label/KB **AND** FAERS ROR ≥ 2.0 with lower CI > 1.0. Reserved for newly discovered or unlabeled signals with statistical confirmation.
+* **`significant`**: The AE is **NOT already fully documented** in the FDA label/KB **AND** FAERS ROR ≥ 2.0 with lower CI > 1.0 **AND** at least one relevant literature article was found (count > 0 from PubMed screening). **NEVER assign `significant` when 0 articles passed LLM screening — even if FAERS shows a strong signal.** Reserved for newly discovered or unlabeled signals with statistical confirmation.
 * **`potential`**: Use when ANY of the following is true:
   - The AE IS in the label but literature identifies a novel presentation, population, or clinical context not captured in the label (even with significant FAERS ROR — the FAERS signal reflects the known labeled risk, not a new one)
   - The AE is NOT in the label and literature has novel findings but FAERS is below threshold or unavailable
@@ -348,6 +348,11 @@ You MUST do this for ALL PMIDs. Only after completing this list proceed to FAERS
 
 **FAERS VALIDATION STEP (mandatory — after enumeration, before writing):**
 
+⚠️ **ZERO-LITERATURE PRE-CHECK — evaluate this BEFORE Sub-step A:**
+Count all `fetch_pubmed_advanced` and `search_drug_class_effects` results from this session.
+- If ALL PubMed calls returned **count=0** (zero articles after LLM screening — regardless of total_found or total_fetched): **STOP. Do NOT call `fetch_fda_adverse_events` at all.** Write: *"No relevant literature was retrieved for this drug-AE combination in the 2020–present search window. FAERS validation was not performed."* Set `signal_level="none"`, `faers_results=[]`, and proceed directly to `generate_pharmacovigilance_report`.
+- Only proceed to Sub-step A if at least one PubMed call returned count > 0.
+
 **Sub-step A — Build the literature AE list explicitly:**
 Scan your enumeration table and write:
 ```
@@ -507,11 +512,11 @@ REASON template: "The name '[input]' was not recognized as a pharmaceutical comp
 
 ─── CASE 5: no_literature_found ───
 TRIGGER: BOTH of the following must be true:
-  (a) `fetch_pubmed_advanced` returned count=0 in EVERY call made during this session, AND
+  (a) `fetch_pubmed_advanced` returned count=0 in EVERY call made during this session (count=0 means 0 articles AFTER LLM screening — this applies even when total_found or total_fetched > 0, because the screener rejected all of them), AND
   (b) `search_drug_class_effects` also returned count=0 in every call made during this session.
-Do NOT abort if `fetch_pubmed_advanced` returned even one article in any prior call — even if `search_drug_class_effects` returned 0.
+Do NOT abort if `fetch_pubmed_advanced` returned count > 0 in any prior call (i.e., at least one article passed screening).
 ACTION: abort_code = "no_literature_found"
-REASON template: "No relevant medical literature was found on PubMed for '[drug name]' in relation to the investigated adverse events (search period: 2020–present). This may indicate that the signal has not been reported in recent peer-reviewed literature. Consider broadening the adverse event scope or searching manually."
+REASON template: "No relevant medical literature was found on PubMed for '[drug name]' in relation to the investigated adverse events (search period: 2020–present). This may indicate that the signal has not been reported in recent peer-reviewed literature, or that the search terms did not match indexed publications. Consider broadening the adverse event scope or searching manually."
 
 ─── CASE 6: drug_not_in_portfolio ───
 TRIGGER: `query_knowledge_base` returns drug_in_formulary=false. This is always your FIRST tool call — fire this abort immediately without calling any other tool.
