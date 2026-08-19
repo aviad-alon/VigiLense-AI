@@ -320,14 +320,14 @@
       </div>
 
       <!-- Divider -->
-      <div class="flex items-center gap-3 mb-5">
+      <div id="query-divider" class="hidden flex items-center gap-3 mb-5">
         <div class="flex-1 h-px bg-white/8"></div>
         <span class="text-xs font-heading font-semibold text-slate-500 uppercase tracking-widest whitespace-nowrap">or write your own query</span>
         <div class="flex-1 h-px bg-white/8"></div>
       </div>
 
       <!-- Free-text query -->
-      <div class="prompt-wrapper mb-6">
+      <div id="query-wrapper" class="hidden prompt-wrapper mb-6">
         <textarea
           id="prompt"
           rows="3"
@@ -458,6 +458,9 @@
       if (btn) btn.classList.add('active');
       // Populate textarea with preset query
       document.getElementById('prompt').value = DRUG_QUERIES[name] || `Analyze recent PubMed literature on ${name} for novel adverse effects.`;
+      // Show query area
+      document.getElementById('query-divider').classList.remove('hidden');
+      document.getElementById('query-wrapper').classList.remove('hidden');
       // Update indicator
       document.getElementById('selected-name').textContent = name;
       document.getElementById('selected-indicator').classList.remove('hidden');
