@@ -1296,6 +1296,20 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         c = max(0, total_event - a)
         d = max(0, total_all   - total_drug - total_event + a)
 
+        # ── Auto-compute ROR disproportionality ───────────────────────────────────
+        ror_val      = None
+        ci_lower_val = None
+        ci_upper_val = None
+        is_sig       = False
+        if a > 0 and b > 0 and c > 0 and d > 0:
+            ror_raw      = (a * d) / (b * c)
+            se           = math.sqrt(1/a + 1/b + 1/c + 1/d)
+            ln_ror       = math.log(ror_raw)
+            ci_lower_val = round(math.exp(ln_ror - 1.96 * se), 2)
+            ci_upper_val = round(math.exp(ln_ror + 1.96 * se), 2)
+            ror_val      = round(ror_raw, 2)
+            is_sig       = bool(ror_raw >= 2.0 and ci_lower_val > 1.0)
+
         # ── Demographics — non-blocking (failures return empty structures) ────────
         sex_map = {"0": "Unknown", "1": "Male", "2": "Female"}
         age_map = {
@@ -1326,21 +1340,32 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         ][:5]
 
         return {
-            "a":            a,
-            "b":            b,
-            "c":            c,
-            "d":            d,
-            "drug_name":    drug_name,
-            "adverse_event": adverse_event,
-            "source":       "OpenFDA FAERS API",
-            "retrieved_at": datetime.now(timezone.utc).isoformat(),
-            "counts_note":  (
+            "a":              a,
+            "b":              b,
+            "c":              c,
+            "d":              d,
+            "ror":            ror_val,
+            "ci_lower":       ci_lower_val,
+            "ci_upper":       ci_upper_val,
+            "is_significant": is_sig,
+            "data_available": a > 0,
+            "drug_name":      drug_name,
+            "adverse_event":  adverse_event,
+            "source":         "OpenFDA FAERS API",
+            "retrieved_at":   datetime.now(timezone.utc).isoformat(),
+            "counts_note":    (
                 f"a={a} (drug+event), b={b} (drug, other events), "
                 f"c={c} (other drugs, this event), d={d} (background)"
             ),
+            "disproportionality_note": (
+                f"ROR={ror_val} (95% CI {ci_lower_val}–{ci_upper_val}), "
+                f"significant={'yes' if is_sig else 'no'} (threshold: ROR≥2.0 AND lower CI>1.0)"
+                if ror_val is not None else
+                "ROR not computable — one or more cells are zero"
+            ),
             "demographics": {
-                "sex_distribution":    demographics_sex,
-                "age_groups":          demographics_age,
+                "sex_distribution":      demographics_sex,
+                "age_groups":            demographics_age,
                 "top_concomitant_drugs": concomitant_drugs
             }
         }

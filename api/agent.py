@@ -305,12 +305,13 @@ This field drives the master report header. It MUST reflect BOTH evidence source
 **Execution Rules:**
 1. All numerical/statistical parameters MUST match upstream tool outputs exactly.
 2. **FAERS data pass-through — ALWAYS required:**
-   If `fetch_fda_adverse_events` returned `a > 0` for ANY AE, you MUST surface those results in the report.
-   - `statistically_significant=false` means **below threshold** — not "no data". Always pass the data.
-   - `data_available=true` in the disproportionality result confirms counts exist and MUST be reported.
-3. **Multi-AE FAERS — use `faers_results` list (preferred):**
-   If you called `fetch_fda_adverse_events` for multiple AEs, build a `faers_results` list with one entry per AE that returned `a > 0`. Each entry: `{"ae_term": "...", "a": N, "b": N, "c": N, "d": N, "ror": X.X, "ci_lower": X.X, "ci_upper": X.X, "is_significant": true/false}`. The renderer produces a multi-row table automatically. Set `is_significant` (top-level) to `true` if ANY entry in `faers_results` is significant.
-   - Single AE only: use `ror`, `ci_95`, `case_counts` as before (legacy single-row).
+   `fetch_fda_adverse_events` now returns `ror`, `ci_lower`, `ci_upper`, `is_significant` directly in its response — no separate `calculate_disproportionality` call is needed.
+   If `data_available=true` (a > 0), include this AE in `faers_results` regardless of `is_significant`. Sub-threshold ROR is meaningful evidence and must appear in the report.
+3. **Build `faers_results` directly from FAERS tool responses:**
+   For each `fetch_fda_adverse_events` call where `a > 0`, create one entry using values copied directly from that tool's response:
+   `{"ae_term": adverse_event, "a": a, "b": b, "c": c, "d": d, "ror": ror, "ci_lower": ci_lower, "ci_upper": ci_upper, "is_significant": is_significant}`
+   Do NOT compute or modify any of these values. Set top-level `is_significant` to `true` if ANY `faers_results` entry has `is_significant=true`.
+   Single AE only: use `ror`, `ci_95`, `case_counts` as before (legacy single-row).
 4. **`article_summaries` parameter:** INCLUDE ALL articles returned by `fetch_pubmed_advanced` or `search_drug_class_effects` — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools. For each article provide `pmid` (exact, do not fabricate) and `relevance_summary` (1–3 sentences: study design, population size, key finding with effect size and CI if reported, clinical outcome — no titles or author names). See ARTICLE SUMMARIES rules in Section 3.
 4. **`summary_findings` structure:** Follow this exact procedure before writing anything:
 
@@ -339,9 +340,10 @@ NEVER classify a DDI that reduces drug efficacy as a signal for the drug's prima
 You MUST do this for ALL PMIDs. Only after completing this list proceed to FAERS validation.
 
 **FAERS VALIDATION STEP (mandatory — after enumeration, before writing):**
-For every distinct AE you enumerated (Novel or Known), verify that you have already called `fetch_fda_adverse_events` with the correct MedDRA Preferred Term for that AE. If any AE is missing FAERS data — call the tool now before generating the report.
-Build an internal FAERS table:
-`AE: [MedDRA term] → FAERS: ROR=X.X (CI Y.Y–Z.Z), N=XXXX reports` OR `→ FAERS: No signal (N=X reports after MedDRA synonym retry)`
+From your enumeration table above, compile the list of clinically distinct AEs that appear in AT LEAST ONE literature article. Call `fetch_fda_adverse_events` for each of those AEs — and ONLY those.
+**CRITICAL: Do NOT call FAERS for AEs that had zero literature support.** If the original user query mentioned an AE but no articles discussed it → skip FAERS for that AE entirely. FAERS validates what literature found, not what the user asked.
+Build an internal FAERS results table from the tool responses (ror, ci_lower, ci_upper, is_significant are returned directly — no separate `calculate_disproportionality` call needed):
+`AE: [MedDRA term] → N=XXXX cases, ROR=X.X (CI Y.Y–Z.Z), significant: yes/no`
 Only after this table is complete may you write the sections below.
 
 ```markdown
@@ -361,10 +363,10 @@ If the Key Finding contains specific drug names, numeric values (ROR, HR, CI, do
 - CORRECT: "Concomitant use of warfarin with cephalexin, sulfamethoxazole-trimethoprim, and furosemide was associated with significantly increased major bleeding risk in nursing home residents [PMID: XXXXXXXX]."
 
 **FAERS INTEGRATION — mandatory for every Novel Finding bullet:**
-After each bullet's clinical finding, append the FAERS validation result for that AE on the same line:
-- If FAERS confirms: `→ FAERS confirms: ROR=X.X (95% CI Y.Y–Z.Z), N=XXXX spontaneous reports.`
-- If FAERS shows no signal: `→ FAERS: no disproportionality detected (N=X reports; literature-first signal pending accumulation).`
-- If FAERS was not queryable for this specific AE: `→ FAERS: not queryable for this presentation.`
+After each bullet's clinical finding, append the FAERS result and what it means for signal strength — in your own professional words based on the actual numbers:
+`→ FAERS: ROR=X.X (95% CI Y.Y–Z.Z), N=XXXX reports — [your interpretation: does this support, qualify, or contrast with the literature finding? what does the case volume and ROR level imply about signal strength?]`
+If FAERS was not called for this AE (zero literature support for it): do not append anything.
+If FAERS returned a=0 after synonym retry: `→ FAERS: no spontaneous reporting detected — literature-first signal.`
 
 You MAY cross-reference PMIDs that converge on the same signal.
 Prioritise by clinical severity (life-threatening first, then serious, then mild).
@@ -375,13 +377,9 @@ Cite as [PMID: XXXXXXXX] — system auto-converts to numbered citations.
 - [Label-consistent findings only — same AE category AND same clinical context as label. Keep brief, one bullet per AE category.]
 
 ### Signal Assessment
-Write 4-6 sentences of expert synthesis integrating BOTH evidence streams:
-- How many distinct novel AEs were found, and their clinical severity
-- For each AE where literature AND FAERS converge: state the convergence explicitly (e.g., "Haemorrhage: ROR=4.2 [3.1–5.7] in FAERS, corroborated by N case reports in literature — strong convergent signal")
-- For each AE where literature exists but FAERS shows no signal: note as "literature-first signal — FAERS accumulation pending; clinical vigilance warranted"
-- For each AE where FAERS shows disproportionality but literature is sparse: note as "FAERS-driven signal — literature confirmation needed"
-- Your overall confidence level given the combined evidence
-This is your professional judgment — not a bullet list. Do NOT omit FAERS data — it is a required component of every Signal Assessment.
+Write 4-6 sentences of expert professional synthesis. Your task is to weigh the totality of evidence you gathered — literature findings (quantity, severity, consistency across sources), FAERS data (ROR, case volume, demographics), and FDA Label/KB baseline — and produce a coherent judgment about the signal's strength and clinical significance.
+FAERS data is a required input to your reasoning, not a separate section. Integrate it into your argument: where literature and FAERS reinforce each other, say so and explain what that convergence implies; where they diverge, explain why and what the discrepancy means for confidence.
+This is your professional judgment — not a mechanical summary of each source. Think, then write.
 ```
 
 ---
