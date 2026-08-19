@@ -499,6 +499,30 @@ TOOLS = [
                             "c": {"type": "integer", "description": "Other drugs + target AE cases"},
                             "d": {"type": "integer", "description": "Background: other drugs + other AEs"}
                         }
+                    },
+                    "faers_results": {
+                        "type": "array",
+                        "description": (
+                            "List of per-AE FAERS results when multiple adverse events were investigated. "
+                            "Pass one entry per fetch_fda_adverse_events call that returned a > 0. "
+                            "The renderer builds a multi-row statistics table — one row per AE. "
+                            "When faers_results is provided it supersedes the single ror/ci_95/case_counts fields."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "ae_term":       {"type": "string",  "description": "MedDRA Preferred Term used for this FAERS query"},
+                                "a":             {"type": "integer", "description": "Cases: drug + this AE"},
+                                "b":             {"type": "integer", "description": "Cases: drug + other AEs"},
+                                "c":             {"type": "integer", "description": "Cases: other drugs + this AE"},
+                                "d":             {"type": "integer", "description": "Background cases"},
+                                "ror":           {"type": "number",  "description": "Reporting Odds Ratio"},
+                                "ci_lower":      {"type": "number",  "description": "Lower bound of 95% CI"},
+                                "ci_upper":      {"type": "number",  "description": "Upper bound of 95% CI"},
+                                "is_significant":{"type": "boolean", "description": "True if ROR ≥ 2.0 AND ci_lower > 1.0"}
+                            },
+                            "required": ["ae_term", "ror", "ci_lower", "ci_upper", "is_significant"]
+                        }
                     }
                 },
                 "required": [
@@ -944,11 +968,13 @@ def _extract_article_summaries(
             "This gate is absolute. Animal study = relevant:false regardless of drug importance.\n\n"
             "━━━ STEP 2 — DRUG RELEVANCE GATE ━━━\n"
             "Set relevant=false if:\n"
-            "  ✗ The article has no meaningful connection to the investigated drug, its generics, brand names, or its pharmacological class\n"
+            "  ✗ The article has no meaningful connection to the investigated drug, its generics, or brand names\n"
             "  ✗ The drug is only a passing mention or an unrelated comparator with no safety data\n"
-            "  ✗ The article is entirely about a different drug or unrelated therapeutic area\n"
+            "  ✗ The article is entirely about a DIFFERENT named drug in the same class — e.g., if investigating lisinopril, an article exclusively about enalapril or ramipril is NOT relevant (class membership ≠ drug identity). Set relevant=false.\n"
+            "  ✗ The article is entirely about an unrelated therapeutic area\n"
             "Keep (relevant=true) if the article involves:\n"
-            "  ✓ The investigated drug (or its class/generic) as a meaningful safety subject\n"
+            "  ✓ The investigated drug (or its exact generics/brand names) as a meaningful safety subject\n"
+            "  ✓ The pharmacological CLASS broadly (e.g., 'ACE inhibitors' without naming a specific different drug) — class-level signals are included\n"
             "  ✓ A drug interaction or mechanism directly relevant to the drug's safety profile\n\n"
             "━━━ STEP 3 — WRITE SUMMARY (only if relevant=true) ━━━\n"
             "Write a concise analytical summary (2-4 sentences).\n"
@@ -1489,6 +1515,7 @@ def generate_pharmacovigilance_report(
     literature_section: str | None = None,    # Python-injected by agent.py — NOT from LLM
     case_counts: dict | None = None,          # raw 2×2 a/b/c/d values for transparent reporting
     signal_level: str | None = None,          # composite: "none" | "potential" | "significant"
+    faers_results: list | None = None,        # per-AE FAERS results for multi-row stats table
 ) -> dict:
     """
     Generate a standardized Pharmacovigilance Evaluation Report in Markdown.
@@ -1512,11 +1539,25 @@ def generate_pharmacovigilance_report(
     else:
         composite_badge = "🟢 NO SIGNIFICANT SIGNAL"
 
+    # ── Determine best single-AE signal for Subject table badge ─────────────
+    # When faers_results is provided, derive is_significant / ror from the best entry
+    _best_ror   = ror
+    _best_ci    = ci_95
+    _any_sig    = is_significant
+    if faers_results:
+        for fr in faers_results:
+            if fr.get("is_significant"):
+                _any_sig = True
+            r = fr.get("ror")
+            if r is not None and (_best_ror is None or r > _best_ror):
+                _best_ror = r
+                _best_ci  = [fr.get("ci_lower"), fr.get("ci_upper")]
+
     # ── FAERS-specific status row (statistics section only) ───────────────────
-    if is_significant:
+    if _any_sig:
         faers_row_badge = "🔴 Significant — ROR ≥ 2.0 and lower CI > 1.0"
-    elif ror is not None:
-        faers_row_badge = "🟢 Not Significant"
+    elif _best_ror is not None:
+        faers_row_badge = "🟡 Computed — below significance threshold"
     else:
         faers_row_badge = "⬜ Not Calculable — No usable frequency data available"
 
@@ -1528,14 +1569,37 @@ def generate_pharmacovigilance_report(
     else:
         lit_badge = "🟢 No novel actionable findings"
 
-    if ror is not None:
-        ci_str     = f"(95% CI: {ci_95[0]}, {ci_95[1]})" if ci_95 else "(95% CI: N/A)"
+    # ── Statistics section: multi-row (faers_results) or single-row (ror) ────
+    if faers_results:
+        # Multi-row table — one row per AE
+        header = (
+            "| Adverse Event (MedDRA PT) | Cases (a) | ROR | 95% CI | Signal |\n"
+            "| :--- | ---: | ---: | :--- | :---: |\n"
+        )
+        rows = ""
+        for fr in faers_results:
+            ae      = fr.get("ae_term", "—")
+            a_val   = fr.get("a", "N/A")
+            r_val   = fr.get("ror", "N/A")
+            ci_l    = fr.get("ci_lower", "N/A")
+            ci_u    = fr.get("ci_upper", "N/A")
+            sig     = "🔴 Yes" if fr.get("is_significant") else "🟡 No"
+            rows += f"| {ae} | {a_val} | {r_val} | {ci_l}–{ci_u} | {sig} |\n"
 
-        table_rows = (
-            f"| **Calculated ROR** | {ror} {ci_str} |\n"
-            f"| **Statistical Signal (FAERS)** | {faers_row_badge} |"
+        stats_section = (
+            "## Statistical Disproportionality Analysis\n\n"
+            "**Source:** OpenFDA FAERS Database\n\n"
+            f"{header}{rows}"
+            "\n> Significance criterion: ROR ≥ 2.0 AND lower 95% CI > 1.0\n"
         )
 
+    elif _best_ror is not None:
+        # Legacy single-row table
+        ci_str     = f"(95% CI: {_best_ci[0]}, {_best_ci[1]})" if _best_ci else "(95% CI: N/A)"
+        table_rows = (
+            f"| **Calculated ROR** | {_best_ror} {ci_str} |\n"
+            f"| **Statistical Signal (FAERS)** | {faers_row_badge} |"
+        )
         if case_counts:
             a = case_counts.get("a", "N/A")
             b = case_counts.get("b", "N/A")
@@ -1547,10 +1611,8 @@ def generate_pharmacovigilance_report(
                 f"\n| **Cases: Other Drugs + AE (c)** | {c} |"
                 f"\n| **Background Cases (d)** | {d} |"
             )
-
         if disproportionality_source:
             table_rows += f"\n| **Data Source** | {disproportionality_source} |"
-
         faers_note = ""
         if disproportionality_source and "FAERS" in disproportionality_source:
             faers_note = (
@@ -1558,7 +1620,6 @@ def generate_pharmacovigilance_report(
                 "Real-world pharmacovigilance data was retrieved directly from OpenFDA FAERS "
                 "to enable disproportionality analysis.\n"
             )
-
         stats_section = (
             "## Statistical Disproportionality Analysis\n\n"
             "| Metric / Parameter | Value / Data |\n"
@@ -1680,7 +1741,8 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
         return generate_pharmacovigilance_report(**_filter(fn_args, {
             "drug_name", "adverse_event", "is_significant", "signal_level",
             "summary_findings", "recommendations", "ror", "ci_95",
-            "disproportionality_source", "literature_section", "case_counts"
+            "disproportionality_source", "literature_section", "case_counts",
+            "faers_results"
         }))
     if fn_name == "submit_final_report":
         return submit_final_report(**_filter(fn_args, {
