@@ -102,7 +102,7 @@ def get_agent_info():
             "VigiLenseAI is built to support pharmaceutical safety teams in their post-market "
             "surveillance work. It automates the most time-consuming parts of the process - "
             "screening literature, querying adverse event databases, and generating reports - "
-            "so analysts can focus on decision-making rather than data gathering. Faster signal "
+            "so safety teams can focus on decision-making rather than data gathering. Faster signal "
             "detection also reduces the risk of missing reporting deadlines and the regulatory "
             "consequences that follow."
         ),
