@@ -14,9 +14,7 @@
 
 ### The problem
 
-Pharmaceutical companies are required to continuously monitor the safety of their approved drugs. When a potential safety signal appears, a safety team member typically has to search medical literature, check the FDA drug label, pull adverse event data from FAERS, run a statistical calculation, and write a structured report - all manually, across multiple tools and tabs.
-
-It's slow, repetitive, and easy to miss things.
+Pharmaceutical companies are required to continuously monitor the safety of their approved drugs. Safety teams need to stay on top of new findings in the medical literature and identify potential signals early - all within tight regulatory timeframes. Missing a signal or reporting late can expose the company to regulatory action or legal liability.
 
 ### Our solution
 
