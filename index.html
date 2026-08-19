@@ -103,6 +103,11 @@
     .chevron { transition:transform 0.3s ease; }
     .chevron.open { transform:rotate(180deg); }
 
+    /* Query section reveal */
+    .query-reveal { max-height:0; overflow:hidden; opacity:0; transform:translateY(-6px);
+      transition:max-height 0.45s cubic-bezier(0.4,0,0.2,1), opacity 0.35s ease 0.08s, transform 0.35s ease 0.08s; }
+    .query-reveal.open { max-height:600px; opacity:1; transform:translateY(0); }
+
     /* Markdown report styles */
     .prose-report h1 { font-size:1.15rem; font-weight:700; color:#e2e8f0; margin:0 0 0.75rem; font-family:'Figtree',sans-serif; }
     .prose-report h2 { font-size:0.95rem; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:0.07em; margin:1.2rem 0 0.5rem; font-family:'Figtree',sans-serif; border-bottom:1px solid rgba(255,255,255,0.07); padding-bottom:0.3rem; }
@@ -313,30 +318,35 @@
         <button class="drug-btn" id="btn-Adalimumab"    onclick="selectDrug('Adalimumab')">Adalimumab</button>
       </div>
 
-      <!-- Divider + instruction -->
-      <div id="query-divider" class="hidden mb-4">
-        <div class="flex items-center gap-3 mb-2">
-          <div class="flex-1 h-px bg-white/8"></div>
-          <span class="text-xs font-heading font-semibold text-slate-500 uppercase tracking-widest whitespace-nowrap">Customize your query</span>
-          <div class="flex-1 h-px bg-white/8"></div>
-        </div>
-        <p class="text-xs text-slate-500 text-center leading-relaxed">
-          Use the suggested prompt or tailor it to your focus - e.g. narrow to a specific patient population, risk factor, or adverse event
-        </p>
-        <p class="text-xs text-center mt-1" style="color: rgba(251,191,36,0.65);">
-          Note: You can only investigate drugs that belong to the company's portfolio.
-        </p>
-      </div>
+      <!-- Query section (animated reveal) -->
+      <div id="query-section" class="query-reveal">
 
-      <!-- Free-text query -->
-      <div id="query-wrapper" class="hidden prompt-wrapper mb-5">
-        <textarea
-          id="prompt"
-          rows="3"
-          placeholder="e.g. Analyze hepatotoxicity signals for Metformin based on recent literature and FAERS data..."
-          class="block w-full px-4 py-3 text-slate-200 placeholder-slate-500 font-body text-sm leading-relaxed resize-none focus:ring-0 transition-all"
-          aria-label="Pharmacovigilance query"
-        ></textarea>
+        <!-- Divider + instruction -->
+        <div class="mb-4">
+          <div class="flex items-center gap-3 mb-2">
+            <div class="flex-1 h-px bg-white/8"></div>
+            <span class="text-xs font-heading font-semibold text-slate-500 uppercase tracking-widest whitespace-nowrap">Customize your query</span>
+            <div class="flex-1 h-px bg-white/8"></div>
+          </div>
+          <p class="text-sm text-slate-500 text-center leading-relaxed">
+            Use the suggested prompt or tailor it to your focus - e.g. narrow to a specific patient population, risk factor, or adverse event
+          </p>
+          <p class="text-sm text-slate-500 text-center mt-1">
+            Note: You can only investigate drugs that belong to the company's portfolio.
+          </p>
+        </div>
+
+        <!-- Free-text query -->
+        <div class="prompt-wrapper mb-5">
+          <textarea
+            id="prompt"
+            rows="3"
+            placeholder="e.g. Analyze hepatotoxicity signals for Metformin based on recent literature and FAERS data..."
+            class="block w-full px-4 py-3 text-slate-200 placeholder-slate-500 font-body text-sm leading-relaxed resize-none focus:ring-0 transition-all"
+            aria-label="Pharmacovigilance query"
+          ></textarea>
+        </div>
+
       </div>
 
       <!-- Run Agent – centred -->
@@ -352,11 +362,6 @@
           </svg>
           Run Agent
         </button>
-      </div>
-
-      <!-- Selected drug indicator (hidden) -->
-      <div id="selected-indicator" class="hidden">
-        <span id="selected-name"></span>
       </div>
 
       <!-- Recent Investigations toggle -->
@@ -459,12 +464,8 @@
       if (btn) btn.classList.add('active');
       // Populate textarea with preset query
       document.getElementById('prompt').value = DRUG_QUERIES[name] || `Analyze recent PubMed literature on ${name} for novel adverse effects.`;
-      // Show query area
-      document.getElementById('query-divider').classList.remove('hidden');
-      document.getElementById('query-wrapper').classList.remove('hidden');
-      // Update indicator
-      document.getElementById('selected-name').textContent = name;
-      document.getElementById('selected-indicator').classList.remove('hidden');
+      // Reveal query section with animation
+      document.getElementById('query-section').classList.add('open');
     }
 
     function showLoading(show) {
