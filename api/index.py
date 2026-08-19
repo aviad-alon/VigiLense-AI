@@ -89,15 +89,18 @@ def get_team_info():
 def get_agent_info():
     return {
         "description": (
-            "VigiLenseAI is a pharmacovigilance AI Agent built on the ReAct "
+            "VigiLenseAI is a pharmacovigilance AI agent built on the ReAct "
             "(Reason \u2192 Act \u2192 Observe) architecture. "
-            "Given a query about a drug in the company's portfolio, the agent independently "
-            "determines which tools to call at each iteration from a suite of 9 specialized tools: "
-            "biomedical literature search (PubMed), FDA adverse event database (OpenFDA FAERS), "
-            "internal vector knowledge base (Pinecone RAG), drug profile retrieval, "
-            "disproportionality metrics (ROR and 95% CI), and structured report generation "
-            "in CIOMS/ICH E2D format \u2014 tailored for clinical safety teams. "
-            "The loop runs for up to 20 iterations per query."
+            "Given a query about a drug in the company's portfolio, the agent conducts a "
+            "full investigation aimed at discovering new and previously unknown adverse events "
+            "for the drug under review. "
+            "To carry out the investigation, the agent has access to 9 specialized tools \u2014 "
+            "covering literature search (PubMed), adverse event databases (OpenFDA FAERS), "
+            "internal knowledge base (Pinecone RAG), drug profile retrieval, and "
+            "statistical signal detection (ROR and 95% CI) \u2014 and independently decides "
+            "which tool to call at each step in service of the final goal. "
+            "Once it determines the investigation is complete, or upon reaching its iteration "
+            "limit, it produces a structured report summarizing all findings."
         ),
         "purpose": (
             "VigiLenseAI is designed to serve pharmaceutical companies responsible for monitoring "
