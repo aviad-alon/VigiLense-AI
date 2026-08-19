@@ -11,11 +11,10 @@ Tools:
   3.  fetch_fda_adverse_events          — OpenFDA FAERS fallback for 2×2 counts
   4.  fetch_pubmed_advanced             — PubMed literature search by clinical term
   5.  search_drug_class_effects         — PubMed search by drug class + adverse event
-  6.  check_past_signals                — Supabase historical investigation lookup
-  7.  query_knowledge_base              — Pinecone RAG over FDA safety documents
-  8.  abort_investigation               — Terminates the ReAct loop on guardrail violation
-  9.  generate_pharmacovigilance_report — Markdown report generator (CIOMS/ICH E2D)
-  10. submit_final_report               — Terminates the ReAct loop normally
+  6.  query_knowledge_base              — Pinecone RAG over FDA safety documents
+  7.  abort_investigation               — Terminates the ReAct loop on guardrail violation
+  8.  generate_pharmacovigilance_report — Markdown report generator (CIOMS/ICH E2D)
+  9.  submit_final_report               — Terminates the ReAct loop normally
 """
 
 import json
@@ -242,31 +241,6 @@ TOOLS = [
                     }
                 },
                 "required": ["drug_class", "adverse_event"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "check_past_signals",
-            "description": (
-                "Query internal historical investigation logs to check if this "
-                "drug-event combination was previously analyzed by the platform. "
-                "Use this to retrieve past verdicts and avoid re-escalating already-reviewed signals."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "drug_name": {
-                        "type": "string",
-                        "description": "Brand or generic name of the drug to look up in historical logs."
-                    },
-                    "adverse_event": {
-                        "type": "string",
-                        "description": "Optional: specific adverse event to filter historical records by."
-                    }
-                },
-                "required": ["drug_name"]
             }
         }
     },
@@ -1390,57 +1364,6 @@ def fetch_fda_adverse_events(drug_name: str, adverse_event: str) -> dict:
         }
 
 
-def check_past_signals(drug_name: str, adverse_event: str = None) -> dict:
-    """
-    Query the Supabase `past_signals` table for historical investigations
-    of a specific drug-event combination.
-    Returns previous verdicts, ROR values, and investigation metadata.
-    """
-    if not supabase:
-        return {
-            "status":       "unavailable",
-            "message":      "Database client is not configured.",
-            "count":        0,
-            "past_signals": []
-        }
-
-    try:
-        query = (
-            supabase.table("past_signals")
-            .select("investigation_id, created_at, drug_name, adverse_event, verdict, previous_ror")
-            .ilike("drug_name", f"%{drug_name}%")
-        )
-
-        if adverse_event:
-            query = query.ilike("adverse_event", f"%{adverse_event}%")
-
-        result = query.order("created_at", desc=True).execute()
-        records = result.data or []
-
-        return {
-            "drug_name":     drug_name,
-            "adverse_event": adverse_event,
-            "count":         len(records),
-            "past_signals":  records
-        }
-
-    except Exception as exc:
-        error_msg = str(exc)
-        # Graceful handling if the table doesn't exist yet
-        if "past_signals" in error_msg and ("does not exist" in error_msg or "relation" in error_msg):
-            return {
-                "count":        0,
-                "past_signals": [],
-                "note":         "past_signals table not yet created. No prior investigations on record."
-            }
-        return {
-            "status":       "error",
-            "message":      error_msg,
-            "count":        0,
-            "past_signals": []
-        }
-
-
 def query_knowledge_base(
     drug_name: str,
     query: str,
@@ -1760,8 +1683,6 @@ def dispatch(fn_name: str, fn_args: dict) -> dict:
         return fetch_pubmed_advanced(**_filter(fn_args, {"query_term", "max_results", "min_year", "investigation_context"}))
     if fn_name == "search_drug_class_effects":
         return search_drug_class_effects(**_filter(fn_args, {"drug_class", "adverse_event", "max_results", "min_year", "investigation_context"}))
-    if fn_name == "check_past_signals":
-        return check_past_signals(**_filter(fn_args, {"drug_name", "adverse_event"}))
     if fn_name == "query_knowledge_base":
         return query_knowledge_base(**_filter(fn_args, {"drug_name", "query", "section", "top_k"}))
     if fn_name == "abort_investigation":

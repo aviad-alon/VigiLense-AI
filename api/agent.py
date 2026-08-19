@@ -231,16 +231,6 @@ Before assigning `signal_level`, ask: "Is this AE already documented in the FDA 
 
 ---
 
-### TOOL SPECIFICATION: check_past_signals
-**Signature:** `check_past_signals(drug_name: str, adverse_event: str = None)`
-**Returns:** `dict` with `past_signals` (list of historical investigation records).
-**Purpose:** Queries Supabase for historical safety signals to avoid re-escalating discarded signals.
-**Execution Rules:**
-1. Execute early to establish a historical baseline.
-2. If prior signals exist, explicitly reference them in the report. If none exist, document this as an initial evaluation.
-
----
-
 ### TOOL SPECIFICATION: fetch_pubmed_advanced
 **Signature:** `fetch_pubmed_advanced(query_term: str, investigation_context: str)`
 **Returns:** `dict` with `results` (list of relevant article dicts with abstract, PMID, title, publication date) and `audit` metadata.
