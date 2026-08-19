@@ -309,6 +309,7 @@ Before assigning `signal_level`, ask: "Is this AE already documented in the FDA 
    `{"ae_term": adverse_event, "a": a, "b": b, "c": c, "d": d, "ror": ror, "ci_lower": ci_lower, "ci_upper": ci_upper, "is_significant": is_significant}`
    Do NOT compute or modify any of these values. Set top-level `is_significant` to `true` if ANY `faers_results` entry has `is_significant=true`.
    Single AE only: use `ror`, `ci_95`, `case_counts` as before (legacy single-row).
+   ⚠️ **CRITICAL — NEVER omit a FAERS entry because its ROR was sub-threshold.** You MUST pass every `fetch_fda_adverse_events` result where `a > 0` into `faers_results`, even when `is_significant=false`. Omitting sub-threshold entries causes the UI to display "Not Calculable" instead of the actual numbers, which is a reporting error. The significance flag is for interpretation — the data itself is always required.
 4. **`article_summaries` parameter:** INCLUDE ALL articles returned by `fetch_pubmed_advanced` or `search_drug_class_effects` — every returned article has already passed LLM screening. Do NOT skip any. Only use PMIDs actually returned by those tools. For each article provide `pmid` (exact, do not fabricate) and `relevance_summary` (1–3 sentences: study design, population size, key finding with effect size and CI if reported, clinical outcome — no titles or author names). See ARTICLE SUMMARIES rules in Section 3.
 4. **`summary_findings` structure:** Follow this exact procedure before writing anything:
 
