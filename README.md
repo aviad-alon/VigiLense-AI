@@ -51,13 +51,13 @@ At the core of VigiLenseAI is a ReAct agent loop implemented in [`api/agent.py`]
 1. **Reason** - the LLM reads the current state and decides what to do next
 2. **Act** - it calls one of 9 specialized tools
 3. **Observe** - the tool result is added to the context
-4. Repeat, up to a maximum of 15 iterations
+4. Repeat, up to a maximum of 20 iterations
 
 The loop terminates in one of two ways: the agent calls `submit_final_report` when it has gathered enough evidence, or it calls `abort_investigation` if a guardrail condition is met. No result is ever fabricated -every claim in the final report must trace directly to a tool response.
 
 ### The tools
 
-At each iteration, the agent reasons about what information it still needs and independently decides which tool to call next. There is no fixed sequence -the agent may search PubMed before or after retrieving the drug profile, may call a tool multiple times with different parameters, or may skip tools that aren't relevant to the specific query. The loop runs for as many iterations as the investigation requires, up to a maximum of 15. If the agent has gathered enough evidence earlier, it ends the investigation before reaching that limit.
+At each iteration, the agent reasons about what information it still needs and independently decides which tool to call next. There is no fixed sequence -the agent may search PubMed before or after retrieving the drug profile, may call a tool multiple times with different parameters, or may skip tools that aren't relevant to the specific query. The loop runs for as many iterations as the investigation requires, up to a maximum of 20. If the agent has gathered enough evidence earlier, it ends the investigation before reaching that limit.
 
 The 9 available tools are:
 
