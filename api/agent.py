@@ -9,7 +9,28 @@ run_react_loop(user_prompt) -> (final_report: dict, steps: list)
 import json
 import re
 from config import llm_client, supabase, CHAT_MODEL
-from tools import TOOLS, dispatch
+from tools import TOOLS, dispatch, query_knowledge_base
+
+# ── Formulary ──────────────────────────────────────────────────────────────────
+# Canonical list of drugs in the company's portfolio.
+# Portfolio check is enforced here in Python — not delegated to the agent.
+
+FORMULARY: list[str] = [
+    "Adalimumab", "Atorvastatin", "Lisinopril", "Metformin",
+    "Methotrexate", "Sertraline", "Sildenafil", "Warfarin",
+]
+_FORMULARY_PATTERN = re.compile(
+    r'\b(' + '|'.join(re.escape(d) for d in FORMULARY) + r')\b',
+    re.IGNORECASE,
+)
+
+def _extract_drug_name(prompt: str) -> str | None:
+    """Return the first formulary drug found in the prompt, or None."""
+    m = _FORMULARY_PATTERN.search(prompt)
+    if not m:
+        return None
+    # Return the canonical capitalisation from FORMULARY
+    return next(d for d in FORMULARY if d.lower() == m.group(1).lower())
 
 # ── Citation Integrity Helpers ─────────────────────────────────────────────────
 # These run in Python — independent of LLM behaviour — guaranteeing that
@@ -194,8 +215,7 @@ Before assigning `signal_level`, ask: "Is this AE already documented in the FDA 
 
 ### HARD BOUNDARIES & TERMINATION RULES
 
-1. **Mandatory First Action:** Your absolute first tool call MUST be `query_knowledge_base`. If `drug_in_formulary = false`, immediately call `abort_investigation(abort_code="drug_not_in_portfolio")` — do not call any other tool first.
-2. **Circuit Breaking:** If at any point you determine the query is unrecognized, ungrounded, or devoid of evidence, gracefully halt via `abort_investigation` instead of fabricating findings.
+1. **Circuit Breaking:** If at any point you determine the query is unrecognized, ungrounded, or devoid of evidence, gracefully halt via `abort_investigation` instead of fabricating findings.
 3. **Completion Phase:** When your investigation has gathered sufficient multi-layered evidence:
    a. Compile findings using `generate_pharmacovigilance_report`.
    b. Terminate via `submit_final_report` as the absolute final action. You MUST call both — do not stop mid-investigation.
@@ -211,9 +231,7 @@ Before assigning `signal_level`, ask: "Is this AE already documented in the FDA 
 **Returns:** `dict` with `chunks` (list of relevant text snippets) and `drug_in_formulary` (bool).
 **Purpose:** Searches official FDA drug labeling documents stored in Pinecone (RAG).
 **Execution Rules:**
-1. **MANDATORY FIRST CALL** in any investigation — no exceptions.
-2. **FORMULARY CHECK:** If `drug_in_formulary = false`, immediately abort via `abort_investigation(abort_code="drug_not_in_portfolio")`.
-3. **SCOPE RULE:** Only incorporate text chunks that explicitly discuss the investigated AE or a clinically adjacent finding in the same organ system or mechanism (e.g., for bruxism → movement disorders, EPS, jaw tension; for NAION → retinal vascular events, optic neuropathy). Discard chunks whose primary topic is a different, unrelated AE category even if co-located in the same label section.
+1. **SCOPE RULE:** Only incorporate text chunks that explicitly discuss the investigated AE or a clinically adjacent finding in the same organ system or mechanism (e.g., for bruxism → movement disorders, EPS, jaw tension; for NAION → retinal vascular events, optic neuropathy). Discard chunks whose primary topic is a different, unrelated AE category even if co-located in the same label section.
 4. **FDA LABEL CROSS-MAPPING (NEAREST TERM MATCHING):**
    - Query KB with the EXACT reported AE term first.
    - If no exact match, perform a mandatory secondary check using adjacent terms (same organ system or physiological mechanism). Examples: spinal cord events → also query "transverse myelitis", "ischemic stroke"; cardiac events → also query "arrhythmia", "QTc prolongation"; hepatic events → also query "hepatotoxicity", "elevated transaminases".
@@ -526,11 +544,53 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     if not llm_client:
         raise ValueError("LLM client is not configured (missing OPENAI_API_KEY).")
 
-    # Wrap with research framing to prevent content-policy false positives
-    # from clinical terminology (e.g. "toxicity", "fatal") in retrieved abstracts
+    # ── Pre-check: portfolio validation in Python (not delegated to the agent) ──
+    drug_name = _extract_drug_name(user_prompt)
+    if not drug_name:
+        # No formulary drug found in the prompt — abort before entering the loop
+        abort_report = {
+            "status":                "aborted",
+            "abort_code":            "drug_not_in_portfolio",
+            "confidence_score":      0,
+            "evidence_chain":        [],
+            "signal_level":          "no signal",
+            "novel_signal_detected": False,
+            "severe_events_found":   [],
+            "reasoning":             (
+                "No drug from the company's portfolio was identified in the query. "
+                "This system only investigates drugs held in the company's formulary."
+            ),
+            "recommended_action":    "Discard - No Novel Signal",
+        }
+        return abort_report, []
+
+    kb_result = query_knowledge_base(drug_name, user_prompt)
+    if not kb_result.get("drug_in_formulary"):
+        abort_report = {
+            "status":                "aborted",
+            "abort_code":            "drug_not_in_portfolio",
+            "confidence_score":      0,
+            "evidence_chain":        [],
+            "signal_level":          "no signal",
+            "novel_signal_detected": False,
+            "severe_events_found":   [],
+            "reasoning":             (
+                f"'{drug_name}' is not in the organisation's pharmacovigilance portfolio "
+                "according to the internal knowledge base."
+            ),
+            "recommended_action":    "Discard - No Novel Signal",
+        }
+        return abort_report, []
+
+    # Inject KB baseline into the first user message so the agent starts with context
+    kb_context = "\n".join(
+        f"[KB chunk — {c['section']}] {c['text']}" for c in kb_result.get("chunks", [])
+    )
     framed_prompt = (
         "[PHARMACOVIGILANCE RESEARCH QUERY — academic use only]\n"
-        + user_prompt
+        f"[PRE-LOADED KNOWLEDGE BASE BASELINE FOR {drug_name.upper()}]\n"
+        f"{kb_context}\n\n"
+        f"[QUERY]\n{user_prompt}"
     )
 
     messages = [
