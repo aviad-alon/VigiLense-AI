@@ -14,7 +14,9 @@
 
 ### The problem
 
-Pharmaceutical companies are required to continuously monitor the safety of their approved drugs. Safety teams need to stay on top of new findings in the medical literature and identify potential signals early - all within tight regulatory timeframes. Missing a signal or reporting late can expose the company to regulatory action or legal liability.
+Pharmaceutical companies are required to continuously monitor the safety of their approved drugs. This means maintaining a dedicated team whose job is to constantly scan for new safety signals in the medical literature - a process that is manual, time-consuming, and prone to human error. These teams are expensive to run, and the cost of a mistake (a missed signal, a late report) can mean regulatory action or legal exposure.
+
+With the rise of AI, there's a clear opportunity to automate the most repetitive parts of this work and let safety professionals focus on decisions rather than data gathering.
 
 ### Our solution
 
