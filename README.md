@@ -14,7 +14,9 @@
 
 ### The problem
 
-Pharmaceutical companies are required to continuously monitor the safety of their approved drugs. This means maintaining a dedicated team whose job is to constantly scan for new safety signals in the medical literature - a process that is manual, time-consuming, and prone to human error. These teams are expensive to run, and the cost of a mistake (a missed signal, a late report) can mean regulatory action or legal exposure.
+Once a drug reaches the market, the regulatory obligation doesn't end - it shifts. Companies are legally required to continuously monitor their approved drugs for safety issues that may not have appeared during clinical trials. This is called post-market surveillance, and it means that someone on the safety team must regularly search the medical literature for new findings, case reports, or signals that could indicate a previously unknown risk.
+
+This work falls on a dedicated team that does it manually and continuously. It's slow, repetitive, and prone to human error. These teams are expensive to maintain, and the cost of getting it wrong - a missed signal, a delayed report - can mean regulatory penalties or legal liability.
 
 With the rise of AI, there's a clear opportunity to automate the most repetitive parts of this work and let safety professionals focus on decisions rather than data gathering.
 
