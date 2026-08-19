@@ -99,12 +99,12 @@ def get_agent_info():
             "limit, it produces a structured report summarizing all findings."
         ),
         "purpose": (
-            "VigiLenseAI is designed to serve pharmaceutical companies responsible for monitoring "
-            "the safety of their marketed drugs (post-market surveillance). By replacing or "
-            "augmenting manual expert review with an AI agent, it improves signal detection accuracy, "
-            "dramatically reduces the cost of hiring specialized pharmacovigilance staff, "
-            "accelerates response times to emerging safety signals, and lowers the risk of "
-            "regulatory fines and penalties resulting from missed or delayed safety reporting."
+            "VigiLenseAI is built to support pharmaceutical safety teams in their post-market "
+            "surveillance work. It automates the most time-consuming parts of the process - "
+            "screening literature, querying adverse event databases, and generating reports - "
+            "so analysts can focus on decision-making rather than data gathering. Faster signal "
+            "detection also reduces the risk of missing reporting deadlines and the regulatory "
+            "consequences that follow."
         ),
         "prompt_template": {
             "template": (
