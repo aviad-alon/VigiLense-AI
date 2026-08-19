@@ -54,7 +54,7 @@
         Bottom line: y=470 → RESPONSE bottom = TOOLS bottom = DATA SOURCES bottom
         Arrow gaps:  30px each (FRONTEND→TASK, TASK→LLM, LLM→END, END→RESPONSE)
     -->
-    <svg viewBox="0 0 1060 488">
+    <svg viewBox="0 0 1060 510">
       <defs>
         <marker id="arr"         markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/></marker>
         <marker id="arr-cyan"    markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/></marker>
@@ -80,14 +80,17 @@
       <!-- RESPONSE → FRONTEND (return loop, right side) -->
       <path d="M 330,445 Q 405,445 405,35 Q 405,18 330,18" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
 
+      <!-- RESPONSE → Supabase (logging, routed below diagram) -->
+      <path d="M 210,470 L 210,494 L 878,494 L 878,462" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
+      <text x="544" y="507" fill="#22d3ee" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">log_to_supabase (API layer)</text>
+
       <!-- LLM → TOOLS -->
       <line x1="370" y1="233" x2="418" y2="233" stroke="#34d399" stroke-width="2" marker-end="url(#arr-emerald)"/>
 
-      <!-- TOOLS → DATA SOURCES (4 arrows, aligned with data source centers) -->
+      <!-- TOOLS → DATA SOURCES (3 arrows, aligned with data source centers) -->
       <line x1="690" y1="88"  x2="728" y2="88"  stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
       <line x1="690" y1="200" x2="728" y2="200" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
       <line x1="690" y1="312" x2="728" y2="312" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
-      <line x1="690" y1="424" x2="728" y2="424" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr-cyan)"/>
 
       <!-- ══ LEFT COLUMN ══ -->
 
@@ -160,22 +163,18 @@
 
       <rect x="432" y="304" width="244" height="30" rx="4" fill="#0f172a"/>
       <rect x="432" y="304" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
-      <text x="554" y="324" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">check_past_signals</text>
+      <text x="554" y="324" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">generate_pv_report</text>
 
-      <rect x="432" y="346" width="244" height="30" rx="4" fill="#0f172a"/>
-      <rect x="432" y="346" width="244" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
-      <text x="554" y="366" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="500" text-anchor="middle">generate_pv_report</text>
+      <!-- Tools 9+10: y=346, half width -->
+      <rect x="432" y="346" width="119" height="30" rx="4" fill="#0f172a"/>
+      <rect x="432" y="346" width="119" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="491" y="366" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="9" font-weight="500" text-anchor="middle">submit_final_report</text>
 
-      <!-- Tools 9+10: y=388, half width -->
-      <rect x="432" y="388" width="119" height="30" rx="4" fill="#0f172a"/>
-      <rect x="432" y="388" width="119" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
-      <text x="491" y="408" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="9" font-weight="500" text-anchor="middle">submit_final_report</text>
+      <rect x="557" y="346" width="119" height="30" rx="4" fill="#0f172a"/>
+      <rect x="557" y="346" width="119" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
+      <text x="616" y="366" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="9" font-weight="500" text-anchor="middle">abort_investigation</text>
 
-      <rect x="557" y="388" width="119" height="30" rx="4" fill="#0f172a"/>
-      <rect x="557" y="388" width="119" height="30" rx="4" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
-      <text x="616" y="408" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="9" font-weight="500" text-anchor="middle">abort_investigation</text>
-
-      <text x="554" y="444" fill="#14b8a6" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">api/tools.py</text>
+      <text x="554" y="402" fill="#14b8a6" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">api/tools.py</text>
 
       <!-- ══ RIGHT COLUMN — DATA SOURCES (y=18 to y=470, h=452) ══ -->
 
@@ -206,8 +205,9 @@
       <!-- Supabase: y=388–460, center=424 -->
       <rect x="743" y="388" width="270" height="72" rx="6" fill="#0f172a"/>
       <rect x="743" y="388" width="270" height="72" rx="6" fill="rgba(30,41,59,0.6)" stroke="#334155" stroke-width="1"/>
-      <text x="878" y="418" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" text-anchor="middle">Supabase PostgreSQL</text>
-      <text x="878" y="439" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="12" text-anchor="middle">Run history · agent_logs table</text>
+      <text x="878" y="412" fill="#e2e8f0" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" text-anchor="middle">Supabase PostgreSQL</text>
+      <text x="878" y="430" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">Run history · past reports</text>
+      <text x="878" y="449" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="11" text-anchor="middle">agent_logs · debug &amp; errors</text>
 
     </svg>
   </div>

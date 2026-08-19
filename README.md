@@ -49,7 +49,7 @@ The system is designed to operate within a **specific company's drug portfolio**
 At the core of VigiLenseAI is a ReAct agent loop implemented in [`api/agent.py`](api/agent.py). When a query arrives, the agent enters an iterative cycle:
 
 1. **Reason** - the LLM reads the current state and decides what to do next
-2. **Act** - it calls one of 10 specialized tools
+2. **Act** - it calls one of 9 specialized tools
 3. **Observe** - the tool result is added to the context
 4. Repeat, up to a maximum of 15 iterations
 
@@ -59,11 +59,9 @@ The loop terminates in one of two ways: the agent calls `submit_final_report` wh
 
 At each iteration, the agent reasons about what information it still needs and independently decides which tool to call next. There is no fixed sequence -the agent may search PubMed before or after retrieving the drug profile, may call a tool multiple times with different parameters, or may skip tools that aren't relevant to the specific query. The loop runs for as many iterations as the investigation requires, up to a maximum of 15. If the agent has gathered enough evidence earlier, it ends the investigation before reaching that limit.
 
-The 10 available tools are:
+The 9 available tools are:
 
 **`query_knowledge_base`** - Performs a semantic vector search (RAG) over a Pinecone index containing FDA label content and safety summaries for the 8 formulary drugs. This is the one tool the agent is always required to call first, to verify the drug is in the portfolio before doing anything else.
-
-**`check_past_signals`** - Queries the Supabase `agent_logs` table to surface any previous investigations on the same drug, so the agent can build on prior findings rather than starting from scratch.
 
 **`get_drug_profile`** - Resolves the drug name against OpenFDA to retrieve the current FDA label: active ingredients, drug class, mechanism of action, and brand names. Falls back to RxNorm for normalization when the OpenFDA lookup is ambiguous.
 
@@ -168,7 +166,7 @@ The bundled knowledge base covers 8 drugs: **Adalimumab**, **Atorvastatin**, **L
 ├── api/
 │   ├── index.py          # FastAPI app - all HTTP routes and data models
 │   ├── agent.py          # ReAct loop, system prompt, citation integrity scrubber
-│   ├── tools.py          # 10 pharmacovigilance tools
+│   ├── tools.py          # 9 pharmacovigilance tools
 │   ├── config.py         # Shared SDK clients (OpenAI, Pinecone, Supabase)
 │   └── architecture.png  # Architecture diagram (served at /api/model_architecture)
 ├── data/                 # Drug profile JSON files used to seed Pinecone
