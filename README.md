@@ -52,7 +52,7 @@ At each iteration, the agent reasons about what information it still needs and i
 
 The 9 available tools are:
 
-**`query_knowledge_base`** - Performs a semantic vector search (RAG) over a Pinecone index containing FDA label content and safety summaries for the 8 formulary drugs. This is the one tool the agent is always required to call first, to verify the drug is in the portfolio before doing anything else.
+**`query_knowledge_base`** - Performs a semantic vector search (RAG) over a Pinecone index containing FDA label content and safety summaries for the 8 formulary drugs. The agent is always required to call this first - both to confirm the drug is in the portfolio and to retrieve internal knowledge about it (known risks, mechanism, label baseline) before searching external sources.
 
 **`get_drug_profile`** - Resolves the drug name against OpenFDA to retrieve the current FDA label: active ingredients, drug class, mechanism of action, and brand names. Falls back to RxNorm for normalization when the OpenFDA lookup is ambiguous.
 
