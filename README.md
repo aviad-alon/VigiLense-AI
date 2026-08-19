@@ -60,9 +60,9 @@ The 9 available tools are:
 
 **`search_drug_class_effects`** - Same as above but searches by drug class rather than by a specific compound name, useful for contextualizing a finding within a broader pharmacological class (e.g. "SGLT2 inhibitors AND ketoacidosis").
 
-**`fetch_fda_adverse_events`** - Queries the OpenFDA FAERS database for real-world case counts for a drug–event pair, returning the 2×2 contingency table values needed for disproportionality analysis.
+**`fetch_fda_adverse_events`** - Queries the OpenFDA FAERS database to retrieve real-world reporting counts for a specific drug–event pair. FAERS aggregates adverse event reports submitted by patients, clinicians, and manufacturers worldwide. The tool returns the raw counts needed to assess how often this event is reported for this drug compared to all other drugs in the database.
 
-**`calculate_disproportionality`** - Computes the Reporting Odds Ratio (ROR) and its 95% confidence interval from a 2×2 contingency table. An ROR lower bound above 1 is treated as a potential disproportionate signal.
+**`calculate_disproportionality`** - Takes the counts from FAERS and computes the Reporting Odds Ratio (ROR) with a 95% confidence interval. The purpose is to give statistical weight to a finding: if an adverse event showed up in the literature, this tool answers whether it's also reported disproportionately in real-world data - and with enough statistical confidence to treat it as a signal worth flagging. An ROR lower bound above 1 suggests the event is reported more than would be expected by chance.
 
 **`generate_pharmacovigilance_report`** - Assembles the structured Markdown report in CIOMS/ICH E2D format, with sections for the FDA label baseline, novel findings from literature, known/expected findings, and signal assessment. All PubMed citations are rendered as numbered references pointing to real PMIDs retrieved during the investigation.
 
