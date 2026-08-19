@@ -28,7 +28,7 @@ It only works with drugs that belong to the company's portfolio. If a drug isn't
 
 ### Why it's useful
 
-- **Faster** - what used to take hours now takes under a minute
+- **Faster** - what used to take hours is completed in a fraction of the time
 - **Consistent** - every report follows the same structure, every time
 - **Traceable** - every claim in the report links to a real source retrieved during the run
 - **Transparent** - every step the agent took is logged and visible
