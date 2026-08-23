@@ -568,7 +568,6 @@ def run_react_loop(user_prompt: str) -> tuple[dict, list]:
     for _ in range(MAX_ITERATIONS):
 
         # ── Reason: ask the LLM what to do next ──────────────────────────────
-        # ** LLMod.ai note: restore tool_choice="auto" before submission if LLMod doesn't support "required" **
         try:
             response = llm_client.chat.completions.create(
                 model       = CHAT_MODEL,
